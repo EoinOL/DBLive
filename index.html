@@ -3,41 +3,38 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GPS Test</title>
+  <title>Dublin Bus Nearby</title>
   <style>
     body {
       font-family: sans-serif;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-      background: #f0f4f8;
+      padding: 1em;
+      background: #f9fafc;
+    }
+    h1 {
+      text-align: center;
     }
     #coords {
-      font-size: 1.2em;
-      margin-top: 20px;
+      margin-top: 1em;
+      font-weight: bold;
     }
-    button {
-      padding: 10px 20px;
-      font-size: 1em;
-      border: none;
+    #stops {
+      margin-top: 1.5em;
+    }
+    .stop {
+      background: white;
       border-radius: 8px;
-      background: #0078d7;
-      color: white;
-      cursor: pointer;
-    }
-    button:disabled {
-      background: #ccc;
-      cursor: default;
+      padding: 0.5em 1em;
+      margin-bottom: 0.5em;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
   </style>
 </head>
 <body>
-  <h1>GPS Location Test</h1>
-  <button id="getLocation">Get Location</button>
-  <div id="coords">Waiting...</div>
+  <h1>Dublin Bus Nearby</h1>
+  <div id="coords">Locating...</div>
+  <div id="stops">Loading bus stops...</div>
 
+  <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
