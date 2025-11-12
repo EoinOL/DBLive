@@ -31,6 +31,31 @@ function distance(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// Compute initial bearing from point A to B in degrees
+function bearing(lat1, lon1, lat2, lon2) {
+  const toRad = (x) => (x * Math.PI) / 180;
+  const toDeg = (x) => (x * 180) / Math.PI;
+
+  const φ1 = toRad(lat1);
+  const φ2 = toRad(lat2);
+  const Δλ = toRad(lon2 - lon1);
+
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x =
+    Math.cos(φ1) * Math.sin(φ2) -
+    Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+
+  let θ = toDeg(Math.atan2(y, x));
+  return (θ + 360) % 360; // normalize to 0–360
+}
+
+// Convert bearing in degrees to 8-point compass
+function compassDirection(deg) {
+  const directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+  const index = Math.round(deg / 45) % 8;
+  return directions[index];
+}
+
 // Clean stop code: last 6 digits, no leading zeros
 function cleanStopCode(code) {
   if (!code) return "?";
@@ -70,14 +95,17 @@ async function main() {
             f.properties.Longitude
         )
         .map((f) => {
-          // Convert string lat/lon to numbers
           const lat = Number(f.properties.Latitude);
           const lon = Number(f.properties.Longitude);
+
+          const stopBearing = bearing(latitude, longitude, lat, lon);
+          const direction = compassDirection(stopBearing);
 
           return {
             id: cleanStopCode(f.properties.AtcoCode),
             name: f.properties.SCN_English || "Unknown",
             distance: distance(latitude, longitude, lat, lon),
+            direction,
           };
         });
 
@@ -92,7 +120,7 @@ async function main() {
           <div class="stop">
             <strong>${s.name}</strong><br>
             Stop No: ${s.id}<br>
-            Distance: ${s.distance.toFixed(0)} m
+            Distance: ${s.distance.toFixed(0)} m (${s.direction})
           </div>
         `
         )
