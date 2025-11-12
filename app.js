@@ -63,6 +63,21 @@ function cleanStopCode(code) {
   return String(Number(last6));
 }
 
+// Format ISO 8601 time to HH:MM
+function formatTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+// Fetch real-time arrivals from Cloudflare Worker
+async function getArrivals(atco) {
+  const proxyUrl = `https://falling-firefly-fd90.eoinol.workers.dev?atco=${atco}`;
+  const resp = await fetch(proxyUrl);
+  if (!resp.ok) throw new Error("Failed to fetch arrivals");
+  return await resp.json();
+}
+
 async function main() {
   const coordsDiv = document.getElementById("coords");
   const stopsDiv = document.getElementById("stops");
@@ -78,13 +93,13 @@ async function main() {
   coordsDiv.textContent = "Locating…";
 
   navigator.geolocation.getCurrentPosition(
-    (pos) => {
+    async (pos) => {
       const { latitude, longitude, accuracy } = pos.coords;
       coordsDiv.textContent = `Lat: ${latitude.toFixed(6)}, Lon: ${longitude.toFixed(
         6
       )} (±${accuracy.toFixed(1)} m)`;
 
-      // Filter and map stops with proper property names
+      // Map stops with proper property names
       const distances = stops
         .filter(
           (f) =>
@@ -102,7 +117,8 @@ async function main() {
           const direction = compassDirection(stopBearing);
 
           return {
-            id: cleanStopCode(f.properties.AtcoCode),
+            id: f.properties.AtcoCode, // keep full AtcoCode for Worker
+            cleanId: cleanStopCode(f.properties.AtcoCode),
             name: f.properties.SCN_English || "Unknown",
             distance: distance(latitude, longitude, lat, lon),
             direction,
@@ -115,20 +131,43 @@ async function main() {
       distances.sort((a, b) => a.distance - b.distance);
       const nearest = distances.slice(0, 5);
 
-      // Display nearest stops with Google Maps links
+      // Display nearest stops
       stopsDiv.innerHTML = nearest
         .map(
           (s) => `
           <div class="stop">
             <strong>${s.name}</strong><br>
-            Stop No: ${s.id}<br>
+            Stop No: ${s.cleanId}<br>
             <a href="https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lon}" target="_blank">
               ${s.distance.toFixed(0)} m (${s.direction})
             </a>
+            <div class="arrivals" id="arrivals-${s.cleanId}">Loading arrivals...</div>
           </div>
         `
         )
         .join("");
+
+      // Fetch real-time arrivals for each stop
+      nearest.forEach(async (s) => {
+        const arrivalsDiv = document.getElementById(`arrivals-${s.cleanId}`);
+        try {
+          const data = await getArrivals(s.id); // full AtcoCode
+          if (!data || !data.arrivals || data.arrivals.length === 0) {
+            arrivalsDiv.textContent = "No upcoming arrivals";
+            return;
+          }
+          arrivalsDiv.innerHTML = data.arrivals
+            .map(
+              (a) =>
+                `${a.Line} → ${a.DestinationName || a.Destination} (${formatTime(
+                  a.ExpectedArrival
+                )})`
+            )
+            .join("<br>");
+        } catch (err) {
+          arrivalsDiv.textContent = "Error loading arrivals";
+        }
+      });
     },
     (err) => {
       coordsDiv.textContent = `Error: ${err.message}`;
