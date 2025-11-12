@@ -106,6 +106,8 @@ async function main() {
             name: f.properties.SCN_English || "Unknown",
             distance: distance(latitude, longitude, lat, lon),
             direction,
+            lat,
+            lon,
           };
         });
 
@@ -113,14 +115,16 @@ async function main() {
       distances.sort((a, b) => a.distance - b.distance);
       const nearest = distances.slice(0, 5);
 
-      // Display nearest stops
+      // Display nearest stops with Google Maps links
       stopsDiv.innerHTML = nearest
         .map(
           (s) => `
           <div class="stop">
             <strong>${s.name}</strong><br>
             Stop No: ${s.id}<br>
-            Distance: ${s.distance.toFixed(0)} m (${s.direction})
+            <a href="https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lon}" target="_blank">
+              ${s.distance.toFixed(0)} m (${s.direction})
+            </a>
           </div>
         `
         )
