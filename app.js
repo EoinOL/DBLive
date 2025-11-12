@@ -31,6 +31,13 @@ function distance(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// Clean stop code: last 6 digits, no leading zeros
+function cleanStopCode(code) {
+  if (!code) return "?";
+  const last6 = code.slice(-6);
+  return String(Number(last6));
+}
+
 async function main() {
   const coordsDiv = document.getElementById("coords");
   const stopsDiv = document.getElementById("stops");
@@ -57,7 +64,8 @@ async function main() {
         .filter(
           (f) =>
             f.properties &&
-            (f.properties.AtcoCode || f.properties.SCN_English) &&
+            f.properties.AtcoCode &&
+            f.properties.SCN_English &&
             f.properties.Latitude &&
             f.properties.Longitude
         )
@@ -67,11 +75,9 @@ async function main() {
           const lon = Number(f.properties.Longitude);
 
           return {
-            id: f.properties.AtcoCode || "?",
+            id: cleanStopCode(f.properties.AtcoCode),
             name: f.properties.SCN_English || "Unknown",
             distance: distance(latitude, longitude, lat, lon),
-            lat,
-            lon,
           };
         });
 
@@ -83,13 +89,12 @@ async function main() {
       stopsDiv.innerHTML = nearest
         .map(
           (s) => `
-        <div class="stop">
-          <strong>${s.name}</strong><br>
-          Stop No: ${s.id}<br>
-          Distance: ${s.distance.toFixed(0)} m<br>
-          (${s.lat.toFixed(6)}, ${s.lon.toFixed(6)})
-        </div>
-      `
+          <div class="stop">
+            <strong>${s.name}</strong><br>
+            Stop No: ${s.id}<br>
+            Distance: ${s.distance.toFixed(0)} m
+          </div>
+        `
         )
         .join("");
     },
