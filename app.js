@@ -52,21 +52,23 @@ async function main() {
         6
       )} (±${accuracy.toFixed(1)} m)`;
 
-      // Filter out stops with invalid coordinates and convert to numbers
+      // Filter and map stops with proper property names
       const distances = stops
         .filter(
           (f) =>
-            f.geometry &&
-            Array.isArray(f.geometry.coordinates) &&
-            f.geometry.coordinates.length === 2 &&
-            !isNaN(f.geometry.coordinates[0]) &&
-            !isNaN(f.geometry.coordinates[1])
+            f.properties &&
+            (f.properties.AtcoCode || f.properties.SCN_English) &&
+            f.properties.Latitude &&
+            f.properties.Longitude
         )
         .map((f) => {
-          const [lon, lat] = f.geometry.coordinates.map(Number);
+          // Convert string lat/lon to numbers
+          const lat = Number(f.properties.Latitude);
+          const lon = Number(f.properties.Longitude);
+
           return {
-            id: f.properties.stopid || f.properties.stop_id || "?",
-            name: f.properties.full_name || f.properties.name || "Unknown",
+            id: f.properties.AtcoCode || "?",
+            name: f.properties.SCN_English || "Unknown",
             distance: distance(latitude, longitude, lat, lon),
             lat,
             lon,
