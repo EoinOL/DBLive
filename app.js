@@ -1,3 +1,4 @@
+// Load and decompress the GeoJSON stops file
 async function loadStops() {
   console.log("Fetching stops...");
   const response = await fetch("stops.geojson.gz");
@@ -34,6 +35,7 @@ async function main() {
   const coordsDiv = document.getElementById("coords");
   const stopsDiv = document.getElementById("stops");
 
+  // Load stops
   const stops = await loadStops();
 
   if (!navigator.geolocation) {
@@ -50,19 +52,28 @@ async function main() {
         6
       )} (±${accuracy.toFixed(1)} m)`;
 
-      // Compute distance to each stop
-      const distances = stops.map((f) => {
-        const [lon, lat] = f.geometry.coordinates;
-        return {
-          id: f.properties.stopid || f.properties.stop_id || "?",
-          name: f.properties.full_name || f.properties.name || "Unknown",
-          distance: distance(latitude, longitude, lat, lon),
-          lat,
-          lon,
-        };
-      });
+      // Filter out stops with invalid coordinates and convert to numbers
+      const distances = stops
+        .filter(
+          (f) =>
+            f.geometry &&
+            Array.isArray(f.geometry.coordinates) &&
+            f.geometry.coordinates.length === 2 &&
+            !isNaN(f.geometry.coordinates[0]) &&
+            !isNaN(f.geometry.coordinates[1])
+        )
+        .map((f) => {
+          const [lon, lat] = f.geometry.coordinates.map(Number);
+          return {
+            id: f.properties.stopid || f.properties.stop_id || "?",
+            name: f.properties.full_name || f.properties.name || "Unknown",
+            distance: distance(latitude, longitude, lat, lon),
+            lat,
+            lon,
+          };
+        });
 
-      // Sort by distance
+      // Sort by distance and take the nearest 5 stops
       distances.sort((a, b) => a.distance - b.distance);
       const nearest = distances.slice(0, 5);
 
