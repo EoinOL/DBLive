@@ -1,38 +1,19 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Dublin Bus Live (Expected)</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 20px;
-            background: #fafafa;
-        }
-        .stop-card {
-            background: white;
-            padding: 15px;
-            border-radius: 10px;
-            margin-bottom: 15px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .stop-title {
-            font-size: 20px;
-            font-weight: bold;
-            margin-bottom: 8px;
-        }
-        .arrival-list div {
-            margin: 3px 0;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bus Arrivals</title>
+<style>
+body { font-family: sans-serif; margin: 20px; }
+.stop { margin-bottom: 15px; }
+.stop h2 { margin: 0; font-size: 1.2em; }
+.arrivals { margin-left: 10px; }
+</style>
 </head>
 <body>
-
-<h2>Nearby Bus Stops</h2>
-<div id="status">Getting location…</div>
-<div id="results"></div>
-
+<h1>Nearby Bus Stops</h1>
+<div id="stops">Finding nearest stops…</div>
 <script src="app.js"></script>
 </body>
 </html>
