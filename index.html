@@ -1,54 +1,24 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Nearby Bus Stops</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 1rem;
-      background-color: #f7f7f7;
-    }
-    h1 {
-      text-align: center;
-    }
-    #stops {
-      margin-top: 1rem;
-    }
-    .stop {
-      background-color: #fff;
-      border: 1px solid #ddd;
-      border-radius: 5px;
-      padding: 0.5rem 1rem;
-      margin-bottom: 0.5rem;
-    }
-    .stop h2 {
-      margin: 0;
-      font-size: 1rem;
-    }
-    .arrival {
-      font-size: 0.9rem;
-      color: #555;
-      margin-left: 1rem;
-    }
-    a {
-      color: #0077cc;
-      text-decoration: none;
-    }
-    a:hover {
-      text-decoration: underline;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nearby Bus Stops</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 2rem; }
+        #stopsContainer div { margin-bottom: 1.5rem; padding: 0.5rem; border-bottom: 1px solid #ccc; }
+        a { color: #007bff; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+    </style>
 </head>
 <body>
-  <h1>Nearby Bus Stops</h1>
-  <div id="stops">Loading stops…</div>
+    <h1>Nearby Bus Stops</h1>
+    <div id="stopsContainer">Loading stops…</div>
 
-  <!-- Pako library for decompressing stops.geojson.gz -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
-  
-  <!-- Your main app script -->
-  <script src="app.js"></script>
+    <!-- Pako for gzip decompression -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+    
+    <!-- Main app logic -->
+    <script src="app.js"></script>
 </body>
 </html>
