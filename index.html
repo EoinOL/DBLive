@@ -3,17 +3,19 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Bus Arrivals</title>
+<title>Live Bus Stops</title>
 <style>
-body { font-family: sans-serif; margin: 20px; }
-.stop { margin-bottom: 15px; }
-.stop h2 { margin: 0; font-size: 1.2em; }
-.arrivals { margin-left: 10px; }
+  body { font-family: sans-serif; padding: 20px; }
+  .stop { margin-bottom: 20px; }
+  .stop h2 { margin: 0 0 5px; }
+  .arrival { margin-left: 10px; }
 </style>
+<!-- Load Pako first -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+<script src="app.js" defer></script>
 </head>
 <body>
-<h1>Nearby Bus Stops</h1>
-<div id="stops">Finding nearest stops…</div>
-<script src="app.js"></script>
+<h1>Nearest Bus Stops</h1>
+<div id="stops-container">Finding nearest stops…</div>
 </body>
 </html>
