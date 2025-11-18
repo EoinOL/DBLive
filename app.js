@@ -1,119 +1,132 @@
-// Convert degrees to 8 compass points
-function degreesToCompass(deg) {
-    const directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
-    return directions[Math.round(((deg % 360) / 45)) % 8];
-}
-
-// Load stops from compressed GeoJSON
+// app.js
 async function loadStops() {
+  // load stops.geojson.gz
+  const stopsResp = await fetch("stops.geojson.gz");
+  const stopsBuffer = await stopsResp.arrayBuffer();
+  const stopsText = pako.ungzip(stopsBuffer, { to: "string" });
+  const stopsData = JSON.parse(stopsText);
+
+  // load GTFS files
+  const [calendarResp, calendarDatesResp, tripsResp] = await Promise.all([
+    fetch("calendar.txt"),
+    fetch("calendar_dates.txt"),
+    fetch("trips.txt.gz")
+  ]);
+
+  const calendarText = await calendarResp.text();
+  const calendarDatesText = await calendarDatesResp.text();
+  const tripsBuffer = await tripsResp.arrayBuffer();
+  const tripsText = pako.ungzip(tripsBuffer, { to: "string" });
+
+  // parse CSVs
+  const calendar = parseCSV(calendarText);
+  const calendarDates = parseCSV(calendarDatesText);
+  const trips = parseCSV(tripsText);
+
+  // figure out today's valid service_ids
+  const today = new Date();
+  const todayStr = today.toISOString().slice(0,10).replace(/-/g,""); // YYYYMMDD
+  const dayName = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"][today.getDay()];
+
+  // service_ids active today from calendar
+  let validServiceIds = new Set(
+    calendar
+      .filter(row => row[dayName] === "1" && row.start_date <= todayStr && row.end_date >= todayStr)
+      .map(row => row.service_id)
+  );
+
+  // apply exceptions from calendar_dates
+  calendarDates.forEach(row => {
+    if (row.date === todayStr) {
+      if (row.exception_type === "1") validServiceIds.add(row.service_id); // added
+      else if (row.exception_type === "2") validServiceIds.delete(row.service_id); // removed
+    }
+  });
+
+  // map trip_id -> service_id for quick lookup
+  const tripServiceMap = {};
+  trips.forEach(row => { tripServiceMap[row.trip_id] = row.service_id; });
+
+  return { stopsData, validServiceIds, tripServiceMap };
+}
+
+function parseCSV(csvText) {
+  const lines = csvText.split("\n");
+  const headers = lines.shift().split(",");
+  return lines.map(line => {
+    const values = line.split(",");
+    const obj = {};
+    headers.forEach((h,i) => { obj[h] = values[i]; });
+    return obj;
+  });
+}
+
+function bearingToCompass(deg) {
+  const directions = ["N","NE","E","SE","S","SW","W","NW"];
+  return directions[Math.round(deg / 45) % 8];
+}
+
+// example function to render stops
+async function renderStops({stopsData, validServiceIds, tripServiceMap}, userLat, userLon) {
+  const stopsContainer = document.getElementById("stops");
+  stopsContainer.innerHTML = "";
+
+  // sort stops by distance
+  const stops = stopsData.features.map(f => {
+    const lat = parseFloat(f.properties.Latitude);
+    const lon = parseFloat(f.properties.Longitude);
+    const dx = lat - userLat;
+    const dy = lon - userLon;
+    const dist = Math.sqrt(dx*dx + dy*dy)*111000; // rough meters
+    const bearing = Math.atan2(dy,dx)*180/Math.PI;
+    return {props: f.properties, lat, lon, dist, bearing};
+  }).sort((a,b)=>a.dist-b.dist).slice(0,5); // nearest 5
+
+  for (const stop of stops) {
+    const stopId = stop.props.AtcoCode;
+    let arrivals = [];
     try {
-        const response = await fetch('stops.geojson.gz');
-        const compressed = new Uint8Array(await response.arrayBuffer());
-        const decompressed = pako.ungzip(compressed, { to: 'string' });
-        const geojson = JSON.parse(decompressed);
-        return geojson.features;
-    } catch (err) {
-        console.error('Error loading stops:', err);
-        return [];
-    }
-}
+      const resp = await fetch(`https://pub-aad94a89c9ea4f6390466b521c65d978.r2.dev/stops/${stopId}.json`);
+      const data = await resp.json();
+      const now = new Date();
+      arrivals = data.filter(a => {
+        const tripService = tripServiceMap[a.trip_id];
+        if (!tripService || !validServiceIds.has(tripService)) return false; // skip if not today
+        const arrTimeParts = a.arrival_time.split(":");
+        const arrDate = new Date(now);
+        arrDate.setHours(parseInt(arrTimeParts[0]),parseInt(arrTimeParts[1]),parseInt(arrTimeParts[2]));
+        const diff = (arrDate - now)/60000;
+        return diff >= -30 && diff <= 60; // previous 30 mins to next 60 mins
+      });
 
-// Calculate distance and bearing (in degrees) between two lat/lon points
-function getDistanceAndBearing(lat1, lon1, lat2, lon2) {
-    const R = 6371e3; // meters
-    const φ1 = lat1 * Math.PI/180;
-    const φ2 = lat2 * Math.PI/180;
-    const Δφ = (lat2-lat1) * Math.PI/180;
-    const Δλ = (lon2-lon1) * Math.PI/180;
+      // remove duplicates
+      arrivals = arrivals.filter((v,i,a)=>i===a.findIndex(t=>
+        t.trip_id === v.trip_id && t.arrival_time === v.arrival_time
+      ));
 
-    const a = Math.sin(Δφ/2)*Math.sin(Δφ/2) +
-              Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)*Math.sin(Δλ/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    const d = R * c;
-
-    const y = Math.sin(Δλ) * Math.cos(φ2);
-    const x = Math.cos(φ1)*Math.sin(φ2) -
-              Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
-    const θ = Math.atan2(y, x) * 180/Math.PI; // degrees
-
-    return { distance: d, bearing: (θ + 360) % 360 };
-}
-
-// Find nearest stops to user location
-async function findNearestStops() {
-    if (!navigator.geolocation) {
-        document.getElementById('stops-container').innerText = 'Geolocation not supported.';
-        return;
+    } catch(e) {
+      console.warn("Error loading stop", stopId, e);
     }
 
-    const stops = await loadStops();
+    const stopNumber = parseInt(stopId.slice(-6),10);
+    const compass = bearingToCompass(stop.bearing);
+    const distanceLink = `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lon}`;
 
-    navigator.geolocation.getCurrentPosition(pos => {
-        const userLat = pos.coords.latitude;
-        const userLon = pos.coords.longitude;
-
-        stops.forEach(stop => {
-            const lat = parseFloat(stop.properties.Latitude);
-            const lon = parseFloat(stop.properties.Longitude);
-            const { distance, bearing } = getDistanceAndBearing(userLat, userLon, lat, lon);
-            stop.distance = distance;
-            stop.bearing = bearing;
-        });
-
-        stops.sort((a,b) => a.distance - b.distance);
-        renderStops(stops.slice(0, 5));
-    });
+    const html = `
+      <div class="stop">
+        <h3>${stopNumber} → ${stop.props.SCN_English}</h3>
+        <p><a href="${distanceLink}" target="_blank">${Math.round(stop.dist)} m</a>, ${compass}</p>
+        <ul>
+          ${arrivals.map(a=>`<li>${a.route_short} → ${a.trip_headsign} at ${a.arrival_time}</li>`).join("")}
+        </ul>
+      </div>
+    `;
+    stopsContainer.innerHTML += html;
+  }
 }
 
-// Render nearest stops
-async function renderStops(nearestStops) {
-    const container = document.getElementById("stops-container");
-    container.innerHTML = "";
-
-    for (const stop of nearestStops) {
-        // Stop number: last 6 digits of AtcoCode, remove leading zeroes
-        let stopNumber = stop.properties.AtcoCode.slice(-6).replace(/^0+/, "");
-
-        // Compass bearing (8 points)
-        let compass = degreesToCompass(stop.bearing);
-
-        // Google Maps link
-        let mapLink = `https://www.google.com/maps/search/?api=1&query=${stop.properties.Latitude},${stop.properties.Longitude}`;
-
-        // Fetch arrivals JSON
-        let arrivals = [];
-        try {
-            const resp = await fetch(`https://pub-aad94a89c9ea4f6390466b521c65d978.r2.dev/stops/${stop.properties.AtcoCode}.json`);
-            if (resp.ok) arrivals = await resp.json();
-        } catch (err) {
-            console.warn('Error loading stop:', stop.properties.AtcoCode, err);
-        }
-
-const now = new Date();
-
-// Filter arrivals: only show arrivals from 30 minutes ago up to 60 minutes in the future
-const filteredArrivals = arrivals.filter(a => {
-    const [hours, minutes, seconds] = a.arrival_time.split(':').map(Number);
-    const arrivalDate = new Date(now);
-    arrivalDate.setHours(hours, minutes, seconds, 0);
-
-    const diffMinutes = (arrivalDate - now) / 60000; // difference in minutes
-    return diffMinutes >= -30 && diffMinutes <= 60;
+// get user location and render stops
+navigator.geolocation.getCurrentPosition(async pos => {
+  const {stopsData, validServiceIds, tripServiceMap} = await loadStops();
+  renderStops({stopsData, validServiceIds, tripServiceMap}, pos.coords.latitude, pos.coords.longitude);
 });
-
-const arrivalsHTML = filteredArrivals.length > 0
-    ? filteredArrivals.map(a => `${a.route_short} → ${a.trip_headsign} at ${a.arrival_time}`).join('<br>')
-    : 'No arrivals data in the next hour';
-
-        container.innerHTML += `
-            <div class="stop">
-                <strong>${stop.properties.SCN_English}</strong> (#${stopNumber})<br>
-                <a href="${mapLink}" target="_blank">${Math.round(stop.distance)} m</a>, ${compass}<br>
-                ${arrivalsHTML}
-            </div>
-        `;
-    }
-}
-
-// Start
-findNearestStops();
