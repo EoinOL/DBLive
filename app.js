@@ -1,181 +1,117 @@
-// app.js
-// Dependencies: pako
+// URLs
+const STOPS_URL = 'https://eoinol.github.io/stops.geojson.gz';
+const STOP_JSON_BASE = 'https://pub-aad94a89c9ea4f6390466b521c65d978.r2.dev/stops/';
 
-async function fetchText(url) {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Failed to fetch ${url}`);
-    return await res.text();
+// Utility: Haversine distance in meters
+function getDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371e3;
+    const φ1 = lat1 * Math.PI/180, φ2 = lat2 * Math.PI/180;
+    const Δφ = (lat2-lat1) * Math.PI/180;
+    const Δλ = (lon2-lon1) * Math.PI/180;
+    const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+    const c = 2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R*c;
 }
 
-async function fetchGzText(url) {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Failed to fetch ${url}`);
-    const arrayBuffer = await res.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer);
-    return pako.ungzip(uint8Array, { to: 'string' });
+// Bearing in 8 compass points
+function getCompassBearing(lat1, lon1, lat2, lon2) {
+    const θ = Math.atan2(
+        Math.sin((lon2-lon1)*Math.PI/180)*Math.cos(lat2*Math.PI/180),
+        Math.cos(lat1*Math.PI/180)*Math.sin(lat2*Math.PI/180) -
+        Math.sin(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.cos((lon2-lon1)*Math.PI/180)
+    ) * 180/Math.PI;
+    const deg = (θ + 360) % 360;
+    const compass = ['N','NE','E','SE','S','SW','W','NW'];
+    return compass[Math.round(deg/45)%8];
 }
 
-// Simple CSV parser
-function parseCSV(csvText) {
-    const lines = csvText.split(/\r?\n/);
-    const headers = lines.shift().split(',');
-    return lines.filter(l => l.trim()).map(line => {
-        const values = line.split(',');
-        const obj = {};
-        headers.forEach((h, i) => { obj[h] = values[i]; });
-        return obj;
+// Get user location
+async function getLocation() {
+    return new Promise((resolve, reject) => {
+        if (!navigator.geolocation) return reject('Geolocation not supported');
+        navigator.geolocation.getCurrentPosition(
+            pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+            err => reject(err)
+        );
     });
 }
 
-// Convert day string to integer (0=Sunday..6=Saturday)
-function getWeekdayIndex(day) {
-    const map = { sunday:0, monday:1, tuesday:2, wednesday:3, thursday:4, friday:5, saturday:6 };
-    return map[day.toLowerCase()];
+// Load and decompress stops.geojson.gz
+async function loadStops() {
+    const res = await fetch(STOPS_URL);
+    const buf = await res.arrayBuffer();
+    const decompressed = pako.ungzip(new Uint8Array(buf), { to: 'string' });
+    return JSON.parse(decompressed);
 }
 
-// Load GTFS mapping for today's service_ids
-async function loadGTFSMapping() {
-    const [calendarText, calendarDatesText, tripsText] = await Promise.all([
-        fetchText('calendar.txt'),
-        fetchText('calendar_dates.txt'),
-        fetchGzText('trips.txt.gz')
-    ]);
-
-    const calendar = parseCSV(calendarText);
-    const calendarDates = parseCSV(calendarDatesText);
-    const trips = parseCSV(tripsText);
-
-    const today = new Date();
-    const yyyy = today.getFullYear();
-    const mm = String(today.getMonth()+1).padStart(2,'0');
-    const dd = String(today.getDate()).padStart(2,'0');
-    const todayStr = `${yyyy}${mm}${dd}`;
-    const weekday = today.getDay(); // 0=Sunday
-
-    const activeServices = new Set();
-
-    // calendar.txt rules
-    calendar.forEach(c => {
-        const start = parseInt(c.start_date,10);
-        const end = parseInt(c.end_date,10);
-        const dateNum = parseInt(todayStr,10);
-        if (dateNum >= start && dateNum <= end) {
-            if (parseInt(c[["sunday","monday","tuesday","wednesday","thursday","friday","saturday"][weekday]],10)) {
-                activeServices.add(c.service_id);
-            }
-        }
-    });
-
-    // calendar_dates.txt overrides
-    calendarDates.forEach(cd => {
-        if (cd.date === todayStr) {
-            if (cd.exception_type === '1') activeServices.add(cd.service_id); // added service
-            if (cd.exception_type === '2') activeServices.delete(cd.service_id); // removed service
-        }
-    });
-
-    // Map trip_id -> stop_id
-    const tripMap = {};
-    trips.forEach(t => {
-        if (activeServices.has(t.service_id)) tripMap[t.trip_id] = t;
-    });
-
-    return tripMap;
-}
-
-function filterArrivals(arrivals) {
-    const now = new Date();
-    const past = new Date(now.getTime() - 30*60*1000); // 30 mins ago
-    const future = new Date(now.getTime() + 60*60*1000); // 60 mins ahead
-
-    return arrivals.filter(a => {
-        const t = new Date();
-        const [h,m,s] = a.arrival_time.split(':').map(Number);
-        t.setHours(h, m, s, 0);
-        return t >= past && t <= future;
-    });
-}
-
-// Convert degrees to 8-point compass
-function degToCompass(deg) {
-    const dirs = ['N','NE','E','SE','S','SW','W','NW'];
-    return dirs[Math.floor((deg + 22.5)/45) % 8];
-}
-
-async function loadStopJson(stopId) {
+// Load individual stop JSON
+async function loadStopJson(atco) {
     try {
-        const res = await fetch(`https://pub-aad94a89c9ea4f6390466b521c65d978.r2.dev/stops/${stopId}.json`);
+        const res = await fetch(`${STOP_JSON_BASE}${atco}.json`);
         if (!res.ok) throw new Error(res.status);
-        const data = await res.json();
-        return data;
-    } catch(e) {
-        console.error(`Error loading stop ${stopId}`, e);
+        return await res.json();
+    } catch (err) {
+        console.warn(`Error loading stop ${atco}:`, err);
         return [];
     }
 }
 
-async function renderStops(stops, tripMap) {
+// Render stops with distances and arrivals
+async function renderStops(userPos) {
+    const statusEl = document.getElementById('status');
     const container = document.getElementById('stopsContainer');
+
+    statusEl.textContent = 'Loading stops…';
+    const stopsGeo = await loadStops();
+    const stopsWithDist = stopsGeo.features.map(f => {
+        const lat = parseFloat(f.properties.Latitude);
+        const lon = parseFloat(f.properties.Longitude);
+        const dist = getDistance(userPos.lat, userPos.lon, lat, lon);
+        const bearing = getCompassBearing(userPos.lat, userPos.lon, lat, lon);
+        return { ...f.properties, lat, lon, dist, bearing };
+    });
+
+    stopsWithDist.sort((a,b) => a.dist - b.dist);
+    const nearest = stopsWithDist.slice(0, 5);
+
     container.innerHTML = '';
-
-    for (let stop of stops.features) {
-        const stopId = stop.properties.AtcoCode;
-        const stopLat = parseFloat(stop.properties.Latitude);
-        const stopLon = parseFloat(stop.properties.Longitude);
-
-        const arrivalsRaw = await loadStopJson(stopId);
-
-        // Filter to active trips and current day
-        const arrivalsFiltered = arrivalsRaw.filter(a => tripMap[a.trip_id]).map(a => ({
-            ...a,
-            arrival_time: a.arrival_time,
-            route_short: a.route_short,
-            trip_headsign: a.trip_headsign
-        }));
-
-        // Filter by 30 min past / 60 min future
-        const arrivalsTimeFiltered = filterArrivals(arrivalsFiltered);
-
-        // Deduplicate
-        const arrivalsDedup = [];
-        const seen = new Set();
-        arrivalsTimeFiltered.forEach(a => {
-            const key = `${a.trip_id}|${a.arrival_time}`;
-            if (!seen.has(key)) { seen.add(key); arrivalsDedup.push(a); }
-        });
-
-        // Build HTML
+    for (const stop of nearest) {
+        const stopNumber = parseInt(stop.AtcoCode.slice(-6), 10);
+        const gmapsUrl = `https://www.google.com/maps/search/?api=1&query=${stop.Latitude},${stop.Longitude}`;
         const div = document.createElement('div');
-        const stopNum = parseInt(stopId.slice(-6),10);
-        const compass = degToCompass(Number(stop.properties.Bearing.replace(/[^\d]/g,'')) || 0);
-
-        const distances = Math.round(stop.distance || 0);
-        const mapUrl = `https://www.google.com/maps/search/?api=1&query=${stopLat},${stopLon}`;
-
-        const arrivalsHtml = arrivalsDedup.map(a => `${a.route_short} → ${a.trip_headsign} at ${a.arrival_time}`).join('<br>') || 'No arrivals';
-
-        div.innerHTML = `<strong>${stop.properties.SCN_English} (#${stopNum})</strong> 
-            (<a href="${mapUrl}" target="_blank">${distances}m</a>, ${compass})<br>
-            ${arrivalsHtml}`;
-
+        div.className = 'stop';
+        div.innerHTML = `<h2>${stop.SCN_English} (#${stopNumber}) <a href="${gmapsUrl}" target="_blank">(${Math.round(stop.dist)} m, ${stop.bearing})</a></h2><div class="arrivals">Loading…</div>`;
         container.appendChild(div);
+
+        const arrivals = await loadStopJson(stop.AtcoCode);
+        const now = new Date();
+        const filtered = arrivals.filter(a => {
+            const t = new Date();
+            const parts = a.arrival_time.split(':');
+            t.setHours(parseInt(parts[0]), parseInt(parts[1]), parseInt(parts[2]), 0);
+            const deltaMin = (t - now)/60000;
+            return deltaMin >= -30 && deltaMin <= 60;
+        });
+        // Remove duplicates by trip_id + arrival_time
+        const unique = Array.from(new Map(filtered.map(a => [a.trip_id+'_'+a.arrival_time, a])).values());
+        const arrivalsDiv = div.querySelector('.arrivals');
+        if (unique.length === 0) arrivalsDiv.textContent = 'No arrivals soon';
+        else arrivalsDiv.innerHTML = unique.map(a => `${a.route_short} → ${a.trip_headsign} at ${a.arrival_time}`).join('<br>');
     }
+
+    statusEl.textContent = '';
 }
 
+// Init
 async function init() {
+    const statusEl = document.getElementById('status');
     try {
-        const stopsText = await fetchGzText('stops.geojson.gz');
-        const stops = JSON.parse(stopsText);
-
-        const tripMap = await loadGTFSMapping();
-
-        // Compute nearest stops here or use your existing logic
-        // For demo, just take first 5 stops
-        stops.features = stops.features.slice(0,5);
-
-        await renderStops(stops, tripMap);
-    } catch(e) {
-        console.error(e);
+        const userPos = await getLocation();
+        console.log('User coordinates:', userPos);
+        await renderStops(userPos);
+    } catch(err) {
+        console.error('Could not get location:', err);
+        statusEl.textContent = 'Cannot determine your location. Please allow location access.';
     }
 }
 
