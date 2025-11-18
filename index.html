@@ -1,21 +1,20 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Live Bus Stops</title>
-<style>
-  body { font-family: sans-serif; padding: 20px; }
-  .stop { margin-bottom: 20px; }
-  .stop h2 { margin: 0 0 5px; }
-  .arrival { margin-left: 10px; }
-</style>
-<!-- Load Pako first -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
-<script src="app.js" defer></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Bus Stops</title>
+    <style>
+        body { font-family: sans-serif; padding: 1rem; }
+        .stop { margin-bottom: 1rem; }
+        .stop a { text-decoration: none; color: blue; }
+    </style>
 </head>
 <body>
-<h1>Nearest Bus Stops</h1>
-<div id="stops-container">Finding nearest stops…</div>
+    <h1>Nearest Stops</h1>
+    <div id="stops-container">Finding nearest stops…</div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+    <script src="app.js"></script>
 </body>
 </html>
