@@ -1,99 +1,119 @@
-(async () => {
-  const STOPS_URL = 'stops.geojson.gz';
-  const R2_BASE_URL = 'https://pub-aad94a89c9ea4f6390466b521c65d978.r2.dev/stops/';
+const stopsGzUrl = 'stops.geojson.gz'; // your compressed stops file
+const r2BaseUrl = 'https://pub-aad94a89c9ea4f6390466b521c65d978.r2.dev/stops/'; // base URL of stop JSONs
+const maxNearestStops = 5;
 
-  // Utility: fetch and decompress stops
-  async function loadStops() {
-    const res = await fetch(STOPS_URL);
-    const buffer = await res.arrayBuffer();
-    const decompressed = pako.ungzip(new Uint8Array(buffer), { to: 'string' });
-    return JSON.parse(decompressed).features;
-  }
+let stopsData = [];
 
-  // Utility: Haversine distance
-  function getDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371000;
-    const φ1 = lat1 * Math.PI/180;
-    const φ2 = lat2 * Math.PI/180;
-    const Δφ = (lat2-lat1) * Math.PI/180;
-    const Δλ = (lon2-lon1) * Math.PI/180;
-    const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+// Utility: Haversine distance
+function getDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371000; // meters
+    const toRad = d => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat/2)**2 +
+              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+              Math.sin(dLon/2)**2;
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     return R * c;
-  }
+}
 
-  // Utility: simple bearing calculation
-  function getBearing(lat1, lon1, lat2, lon2) {
-    const φ1 = lat1*Math.PI/180, φ2 = lat2*Math.PI/180;
-    const Δλ = (lon2-lon1)*Math.PI/180;
-    const y = Math.sin(Δλ)*Math.cos(φ2);
-    const x = Math.cos(φ1)*Math.sin(φ2)-Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
-    const θ = Math.atan2(y,x);
-    const deg = (θ*180/Math.PI+360)%360;
-    const directions = ["N","NE","E","SE","S","SW","W","NW"];
-    return directions[Math.round(deg/45)%8];
-  }
+// Utility: simple bearing approximation
+function getBearing(lat1, lon1, lat2, lon2) {
+    const toDeg = rad => rad * 180 / Math.PI;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const y = Math.sin(dLon) * Math.cos(lat2 * Math.PI/180);
+    const x = Math.cos(lat1 * Math.PI/180)*Math.sin(lat2 * Math.PI/180) -
+              Math.sin(lat1 * Math.PI/180)*Math.cos(lat2 * Math.PI/180)*Math.cos(dLon);
+    return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
 
-  // Utility: fetch stop arrivals
-  async function fetchStopArrivals(atcoCode) {
-    const url = `${R2_BASE_URL}${atcoCode}.json`;
+// Load stops.geojson.gz
+async function loadStops() {
+    const response = await fetch(stopsGzUrl);
+    const buffer = await response.arrayBuffer();
+    const decompressed = pako.ungzip(new Uint8Array(buffer), { to: 'string' });
+    const geojson = JSON.parse(decompressed);
+    stopsData = geojson.features.map(f => ({
+        id: f.properties.AtcoCode,
+        name: f.properties.SCN_English,
+        lat: parseFloat(f.properties.Latitude),
+        lon: parseFloat(f.properties.Longitude)
+    }));
+}
+
+// Get nearest stops
+function getNearestStops(userLat, userLon) {
+    return stopsData
+        .map(s => ({
+            ...s,
+            distance: getDistance(userLat, userLon, s.lat, s.lon),
+            bearing: getBearing(userLat, userLon, s.lat, s.lon)
+        }))
+        .sort((a,b) => a.distance - b.distance)
+        .slice(0, maxNearestStops);
+}
+
+// Load stop JSON from R2
+async function loadStopJson(stop) {
+    const url = r2BaseUrl + stop.id + '.json';
     try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('No static schedule available');
-      return await res.json();
-    } catch (err) {
-      return null;
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error('Stop JSON not found');
+        const arrivals = await resp.json();
+        return arrivals;
+    } catch (e) {
+        return []; // gracefully handle missing stop data
     }
-  }
+}
 
-  const stopsDiv = document.getElementById('stops');
-  let userLat = null, userLon = null;
+// Render stops and arrivals
+async function renderStops(stops) {
+    const container = document.getElementById('stops-container');
+    container.innerHTML = '';
+    for (let stop of stops) {
+        const div = document.createElement('div');
+        div.className = 'stop';
+        const heading = document.createElement('h2');
+        heading.textContent = `${stop.name} (${Math.round(stop.distance)} m, ${Math.round(stop.bearing)}°)`;
+        div.appendChild(heading);
 
-  function showStops(nearestStops) {
-    stopsDiv.innerHTML = '';
-    nearestStops.forEach(async stop => {
-      const div = document.createElement('div');
-      div.className = 'stop';
-      const name = stop.properties.SCN_English;
-      const atco = stop.properties.AtcoCode;
-      const distance = Math.round(stop.distance);
-      const bearing = stop.bearing;
+        const arrivals = await loadStopJson(stop);
+        if (arrivals.length === 0) {
+            const p = document.createElement('p');
+            p.textContent = 'No expected arrivals';
+            div.appendChild(p);
+        } else {
+            const ul = document.createElement('ul');
+            for (let arr of arrivals) {
+                const li = document.createElement('li');
+                li.className = 'arrival';
+                li.textContent = `${arr.route_short} → ${arr.trip_headsign} at ${arr.arrival_time}`;
+                ul.appendChild(li);
+            }
+            div.appendChild(ul);
+        }
 
-      div.innerHTML = `<h2>${name} (${distance}m ${bearing})</h2><div class="arrivals">Loading…</div>`;
-      stopsDiv.appendChild(div);
+        container.appendChild(div);
+    }
+}
 
-      const arrivalsDiv = div.querySelector('.arrivals');
-      const arrivals = await fetchStopArrivals(atco);
-      if (!arrivals) {
-        arrivalsDiv.textContent = 'No static schedule available';
+// Main
+async function init() {
+    await loadStops();
+
+    if (!navigator.geolocation) {
+        document.getElementById('stops-container').textContent = 'Geolocation not available';
         return;
-      }
+    }
 
-      arrivalsDiv.innerHTML = arrivals
-        .sort((a,b)=> a.arrival_time.localeCompare(b.arrival_time))
-        .map(a=> `${a.route_short} → ${a.trip_headsign} (${a.arrival_time})`)
-        .join('<br>');
+    navigator.geolocation.getCurrentPosition(async pos => {
+        const userLat = pos.coords.latitude;
+        const userLon = pos.coords.longitude;
+        const nearest = getNearestStops(userLat, userLon);
+        renderStops(nearest);
+    }, err => {
+        document.getElementById('stops-container').textContent = 'Location access denied';
     });
-  }
+}
 
-  const features = await loadStops();
-
-  // Get location
-  navigator.geolocation.getCurrentPosition(pos=>{
-    userLat = pos.coords.latitude;
-    userLon = pos.coords.longitude;
-
-    const nearestStops = features
-      .map(f=>({
-        ...f,
-        distance: getDistance(userLat,userLon,+f.properties.Latitude,+f.properties.Longitude),
-        bearing: getBearing(userLat,userLon,+f.properties.Latitude,+f.properties.Longitude)
-      }))
-      .sort((a,b)=>a.distance-b.distance)
-      .slice(0,5);
-
-    showStops(nearestStops);
-  }, err=>{
-    stopsDiv.textContent = 'Unable to get location';
-  });
-})();
+init();
