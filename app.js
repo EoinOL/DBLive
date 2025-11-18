@@ -89,9 +89,21 @@ async function renderStops(nearestStops) {
             console.warn('Error loading stop:', stop.properties.AtcoCode, err);
         }
 
-        const arrivalsHTML = arrivals.length > 0
-            ? arrivals.map(a => `${a.route_short} → ${a.trip_headsign} at ${a.arrival_time}`).join('<br>')
-            : 'No arrivals data';
+const now = new Date();
+
+// Filter arrivals: only show arrivals from 30 minutes ago up to 60 minutes in the future
+const filteredArrivals = arrivals.filter(a => {
+    const [hours, minutes, seconds] = a.arrival_time.split(':').map(Number);
+    const arrivalDate = new Date(now);
+    arrivalDate.setHours(hours, minutes, seconds, 0);
+
+    const diffMinutes = (arrivalDate - now) / 60000; // difference in minutes
+    return diffMinutes >= -30 && diffMinutes <= 60;
+});
+
+const arrivalsHTML = filteredArrivals.length > 0
+    ? filteredArrivals.map(a => `${a.route_short} → ${a.trip_headsign} at ${a.arrival_time}`).join('<br>')
+    : 'No arrivals data in the next hour';
 
         container.innerHTML += `
             <div class="stop">
