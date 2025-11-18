@@ -1,3 +1,5 @@
+// app.js
+
 // Convert degrees to 8-point compass
 function degToCompass(deg) {
   const val = Math.floor((deg / 45) + 0.5);
@@ -5,7 +7,7 @@ function degToCompass(deg) {
   return compassPoints[val % 8];
 }
 
-// Calculate distance and bearing between two lat/lon points
+// Calculate distance and bearing
 function getDistanceAndBearing(lat1, lon1, lat2, lon2) {
   const R = 6371000; // meters
   const φ1 = lat1 * Math.PI / 180;
@@ -13,7 +15,7 @@ function getDistanceAndBearing(lat1, lon1, lat2, lon2) {
   const Δφ = (lat2 - lat1) * Math.PI / 180;
   const Δλ = (lon2 - lon1) * Math.PI / 180;
 
-  const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+  const a = Math.sin(Δφ/2)**2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2)**2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   const distance = R * c;
 
@@ -21,7 +23,7 @@ function getDistanceAndBearing(lat1, lon1, lat2, lon2) {
   const x = Math.cos(φ1)*Math.sin(φ2) - Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
   const bearingDeg = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
 
-  return {distance: Math.round(distance), bearing: degToCompass(bearingDeg)};
+  return { distance: Math.round(distance), bearing: degToCompass(bearingDeg) };
 }
 
 // Load stops.geojson.gz
@@ -32,119 +34,105 @@ async function loadStops() {
   return JSON.parse(decompressed);
 }
 
-// Load stop JSON from R2 safely
+// Load stop JSON from R2
 async function loadStopJson(atcoCode) {
   const url = `https://pub-aad94a89c9ea4f6390466b521c65d978.r2.dev/stops/${atcoCode}.json`;
   try {
     const resp = await fetch(url);
     if (!resp.ok) return null;
     return await resp.json();
-  } catch {
+  } catch (err) {
+    console.warn(`Error loading stop ${atcoCode}`, err);
     return null;
   }
 }
 
-// Load CSV
+// Load CSV (simple parser)
 async function loadCSV(url) {
   const resp = await fetch(url);
   const text = await resp.text();
-  const lines = text.trim().split('\n');
+  const lines = text.split(/\r?\n/);
   const headers = lines[0].split(',');
   return lines.slice(1).map(line => {
     const values = line.split(',');
     const obj = {};
-    headers.forEach((h,i) => obj[h] = values[i]);
+    headers.forEach((h, i) => { obj[h] = values[i]; });
     return obj;
   });
 }
 
-// Load GTFS trips + service calendar
+// Build service_id → active days map
 async function loadGTFSMapping() {
-  // trips.txt.gz → trip_id → service_id
-  const tripsResp = await fetch('trips.txt.gz');
-  const tripsCompressed = new Uint8Array(await tripsResp.arrayBuffer());
-  const tripsText = pako.ungzip(tripsCompressed, { to: 'string' });
-  const tripsLines = tripsText.trim().split('\n');
-  const tripsHeaders = tripsLines[0].split(',');
-  const tripToService = {};
-  tripsLines.slice(1).forEach(line => {
-    const vals = line.split(',');
-    const trip = {};
-    tripsHeaders.forEach((h,i) => trip[h]=vals[i]);
-    tripToService[trip.trip_id] = trip.service_id;
-  });
-
-  // calendar.txt → service_id → weekdays + start/end dates
   const calendar = await loadCSV('calendar.txt');
-  const calendarMap = {};
-  calendar.forEach(c => {
-    calendarMap[c.service_id] = {
-      monday: c.monday==='1',
-      tuesday: c.tuesday==='1',
-      wednesday: c.wednesday==='1',
-      thursday: c.thursday==='1',
-      friday: c.friday==='1',
-      saturday: c.saturday==='1',
-      sunday: c.sunday==='1',
-      start: c.start_date,
-      end: c.end_date
-    };
+  const calendarDates = await loadCSV('calendar_dates.txt');
+
+  const dayMap = {}; // service_id -> [day strings]
+
+  const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+  // From calendar.txt
+  calendar.forEach(row => {
+    const days = [];
+    dayNames.forEach((day, idx) => {
+      if (row[day.toLowerCase()] === '1') days.push(day);
+    });
+    dayMap[row.service_id] = days;
   });
 
-  // calendar_dates.txt → service_id → exception dates
-  const calDates = await loadCSV('calendar_dates.txt');
-  const exceptions = {};
-  calDates.forEach(e => {
-    if (!exceptions[e.service_id]) exceptions[e.service_id] = {};
-    exceptions[e.service_id][e.date] = parseInt(e.exception_type);
+  // Override/add exceptions from calendar_dates.txt
+  calendarDates.forEach(row => {
+    const d = new Date(row.date.slice(0,4)+'-'+row.date.slice(4,6)+'-'+row.date.slice(6,8));
+    const dayName = dayNames[d.getDay()];
+    if (!dayMap[row.service_id]) dayMap[row.service_id] = [];
+    if (row.exception_type === '1') { // added
+      if (!dayMap[row.service_id].includes(dayName)) dayMap[row.service_id].push(dayName);
+    } else if (row.exception_type === '2') { // removed
+      const idx = dayMap[row.service_id].indexOf(dayName);
+      if (idx >= 0) dayMap[row.service_id].splice(idx,1);
+    }
   });
 
-  // Build set of valid service_ids for today
-  const today = new Date();
-  const yyyymmdd = today.toISOString().split('T')[0].replace(/-/g,'');
-  const dayNames = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
-  const todayName = dayNames[today.getDay()];
-  const validServiceIds = new Set();
-
-  Object.entries(calendarMap).forEach(([sid, val]) => {
-    if (yyyymmdd >= val.start && yyyymmdd <= val.end && val[todayName]) validServiceIds.add(sid);
-  });
-  Object.entries(exceptions).forEach(([sid, dates]) => {
-    if (dates[yyyymmdd]=== '1' || dates[yyyymmdd]===1) validServiceIds.add(sid);
-    if (dates[yyyymmdd]=== '2' || dates[yyyymmdd]===2) validServiceIds.delete(sid);
-  });
-
-  return { tripToService, validServiceIds };
+  return dayMap;
 }
 
-// Filter arrivals: today + last 30m / next 60m
-function filterArrivals(arrivals, tripToService, validServiceIds) {
-  const now = new Date();
-  const startTime = new Date(now.getTime() - 30*60*1000);
-  const endTime = new Date(now.getTime() + 60*60*1000);
-
-  const filtered = arrivals.filter(a => {
-    const service_id = tripToService[a.trip_id];
-    if (!service_id || !validServiceIds.has(service_id)) return false;
-
-    const t = new Date();
-    const parts = a.arrival_time.split(':');
-    t.setHours(parseInt(parts[0]), parseInt(parts[1]), parseInt(parts[2]));
-    return t >= startTime && t <= endTime;
+// Filter and annotate arrivals with days
+async function processArrivals(arrivals, serviceDayMap, trips) {
+  const annotated = arrivals.map(a => {
+    const trip = trips.find(t => t.trip_id === a.trip_id);
+    const serviceDays = trip ? (serviceDayMap[trip.service_id] || []) : [];
+    return {...a, days: serviceDays};
   });
 
-  // deduplicate by trip_id
-  return filtered.filter((a,i,arr) => arr.findIndex(b=>b.trip_id===a.trip_id)===i)
-                 .sort((a,b)=>a.arrival_time.localeCompare(b.arrival_time));
+  // Group by route + headsign + time + days to remove duplicates
+  const grouped = [];
+  const seen = {};
+  annotated.forEach(a => {
+    const key = `${a.route_short}_${a.trip_headsign}_${a.arrival_time}_${a.days.join(',')}`;
+    if (!seen[key]) {
+      grouped.push(a);
+      seen[key] = true;
+    }
+  });
+
+  // Sort by arrival_time
+  grouped.sort((a,b) => a.arrival_time.localeCompare(b.arrival_time));
+  return grouped;
 }
 
-// Main render function
+// Main render
 async function renderStops() {
   const stopsData = await loadStops();
 
-  const userLoc = await new Promise((res, rej) => {
-    navigator.geolocation.getCurrentPosition(pos => res(pos.coords), err => rej(err));
-  });
+  let userLoc;
+  try {
+    userLoc = await new Promise((res, rej) => {
+      navigator.geolocation.getCurrentPosition(pos => res(pos.coords), rej);
+    });
+  } catch(e) {
+    console.warn('Cannot determine location', e);
+    document.getElementById('stops').innerHTML = 'Cannot determine location';
+    return;
+  }
 
   const stopsWithDistance = stopsData.features.map(f => {
     const {distance, bearing} = getDistanceAndBearing(
@@ -156,14 +144,16 @@ async function renderStops() {
 
   const nearestStops = stopsWithDistance.sort((a,b)=>a.distance-b.distance).slice(0,5);
 
-  const { tripToService, validServiceIds } = await loadGTFSMapping();
+  // Load GTFS mappings
+  const serviceDayMap = await loadGTFSMapping();
+  const trips = await loadCSV('trips.txt.gz'); // decompress if necessary
 
   const container = document.getElementById('stops');
   container.innerHTML = '';
 
   for (const stop of nearestStops) {
     const arrivals = await loadStopJson(stop.properties.AtcoCode);
-    const filteredArrivals = arrivals ? filterArrivals(arrivals, tripToService, validServiceIds) : [];
+    const processedArrivals = arrivals ? await processArrivals(arrivals, serviceDayMap, trips) : [];
 
     const stopNumber = parseInt(stop.properties.AtcoCode.slice(-6),10);
     const mapsLink = `https://www.google.com/maps/search/?api=1&query=${stop.properties.Latitude},${stop.properties.Longitude}`;
@@ -187,9 +177,9 @@ async function renderStops() {
     stopDiv.appendChild(bearingEl);
 
     const arrivalsUl = document.createElement('ul');
-    for (const a of filteredArrivals) {
+    for (const a of processedArrivals) {
       const li = document.createElement('li');
-      li.textContent = `${a.route_short} → ${a.trip_headsign} at ${a.arrival_time}`;
+      li.textContent = `${a.route_short} → ${a.trip_headsign} at ${a.arrival_time} (${a.days.join(', ')})`;
       arrivalsUl.appendChild(li);
     }
     stopDiv.appendChild(arrivalsUl);
@@ -197,5 +187,4 @@ async function renderStops() {
   }
 }
 
-// Run on page load
 document.addEventListener('DOMContentLoaded', renderStops);
