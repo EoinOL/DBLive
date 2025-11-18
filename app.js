@@ -1,179 +1,127 @@
-// Load and decompress the GeoJSON stops file
-async function loadStops() {
-  console.log("Fetching stops...");
-  const response = await fetch("stops.geojson.gz");
-  console.log("Response status:", response.status);
+const R2_BASE = "https://pub-aad94a89c9ea4f6390466b521c65d978.r2.dev/stops";
+const GEOJSON_URL = "stops.geojson.gz"; // must be in your GitHub repo
 
-  const arrayBuffer = await response.arrayBuffer();
-  console.log("Got array buffer:", arrayBuffer.byteLength);
-
-  const decompressed = pako.ungzip(new Uint8Array(arrayBuffer), { to: "string" });
-  console.log("Decompressed length:", decompressed.length);
-
-  const geojson = JSON.parse(decompressed);
-  console.log("Parsed features:", geojson.features.length);
-
-  return geojson.features;
+// Gunzip helper
+async function gunzipFetch(url) {
+    const resp = await fetch(url);
+    const blob = await resp.blob();
+    const ds = new DecompressionStream("gzip");
+    const decompressed = blob.stream().pipeThrough(ds);
+    const text = await new Response(decompressed).text();
+    return JSON.parse(text);
 }
 
-// Haversine formula: distance in meters between two lat/lon points
+// Haversine distance (meters)
 function distance(lat1, lon1, lat2, lon2) {
-  const R = 6371e3; // Earth radius in meters
-  const toRad = (x) => (x * Math.PI) / 180;
-  const φ1 = toRad(lat1);
-  const φ2 = toRad(lat2);
-  const Δφ = toRad(lat2 - lat1);
-  const Δλ = toRad(lon2 - lon1);
+    const R = 6371e3;
+    const toRad = deg => deg * Math.PI / 180;
+    const φ1 = toRad(lat1);
+    const φ2 = toRad(lat2);
+    const Δφ = toRad(lat2 - lat1);
+    const Δλ = toRad(lon2 - lon1);
 
-  const a =
-    Math.sin(Δφ / 2) ** 2 +
-    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const a = Math.sin(Δφ/2) ** 2 +
+              Math.cos(φ1) * Math.cos(φ2) *
+              Math.sin(Δλ/2) ** 2;
+
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// Compute initial bearing from point A to B in degrees
+// Bearing (compass-ish)
 function bearing(lat1, lon1, lat2, lon2) {
-  const toRad = (x) => (x * Math.PI) / 180;
-  const toDeg = (x) => (x * 180) / Math.PI;
+    const toRad = d => d * Math.PI / 180;
+    const toDeg = r => r * 180 / Math.PI;
 
-  const φ1 = toRad(lat1);
-  const φ2 = toRad(lat2);
-  const Δλ = toRad(lon2 - lon1);
+    const y = Math.sin(toRad(lon2 - lon1)) * Math.cos(toRad(lat2));
+    const x = Math.cos(toRad(lat1))*Math.cos(toRad(lat2)) *
+              Math.cos(toRad(lon2 - lon1)) -
+              Math.sin(toRad(lat1)) * Math.sin(toRad(lat2));
+    const brng = (toDeg(Math.atan2(y, x)) + 360) % 360;
 
-  const y = Math.sin(Δλ) * Math.cos(φ2);
-  const x =
-    Math.cos(φ1) * Math.sin(φ2) -
-    Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
-
-  let θ = toDeg(Math.atan2(y, x));
-  return (θ + 360) % 360; // normalize to 0–360
-}
-
-// Convert bearing in degrees to 8-point compass
-function compassDirection(deg) {
-  const directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
-  const index = Math.round(deg / 45) % 8;
-  return directions[index];
-}
-
-// Clean stop code: last 6 digits, no leading zeros
-function cleanStopCode(code) {
-  if (!code) return "?";
-  const last6 = code.slice(-6);
-  return String(Number(last6));
-}
-
-// Format ISO 8601 time to HH:MM
-function formatTime(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-// Fetch real-time arrivals from Cloudflare Worker
-async function getArrivals(atco) {
-  const proxyUrl = `https://falling-firefly-fd90.eoinol.workers.dev?atco=${atco}`;
-  const resp = await fetch(proxyUrl);
-  if (!resp.ok) throw new Error("Failed to fetch arrivals");
-  return await resp.json();
+    if (brng < 22.5) return "N";
+    if (brng < 67.5) return "NE";
+    if (brng < 112.5) return "E";
+    if (brng < 157.5) return "SE";
+    if (brng < 202.5) return "S";
+    if (brng < 247.5) return "SW";
+    if (brng < 292.5) return "W";
+    return "NW";
 }
 
 async function main() {
-  const coordsDiv = document.getElementById("coords");
-  const stopsDiv = document.getElementById("stops");
+    document.getElementById("status").innerText = "Loading stop database…";
 
-  // Load stops
-  const stops = await loadStops();
+    // Load stops data
+    const geojson = await gunzipFetch(GEOJSON_URL);
+    const stops = geojson.features;
 
-  if (!navigator.geolocation) {
-    coordsDiv.textContent = "Geolocation not supported.";
-    return;
-  }
+    // Get user location
+    document.getElementById("status").innerText = "Getting location…";
 
-  coordsDiv.textContent = "Locating…";
+    navigator.geolocation.getCurrentPosition(async pos => {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
 
-  navigator.geolocation.getCurrentPosition(
-    async (pos) => {
-      const { latitude, longitude, accuracy } = pos.coords;
-      coordsDiv.textContent = `Lat: ${latitude.toFixed(6)}, Lon: ${longitude.toFixed(
-        6
-      )} (±${accuracy.toFixed(1)} m)`;
+        document.getElementById("status").innerText = "Finding nearest stops…";
 
-      // Map stops with proper property names
-      const distances = stops
-        .filter(
-          (f) =>
-            f.properties &&
-            f.properties.AtcoCode &&
-            f.properties.SCN_English &&
-            f.properties.Latitude &&
-            f.properties.Longitude
-        )
-        .map((f) => {
-          const lat = Number(f.properties.Latitude);
-          const lon = Number(f.properties.Longitude);
-
-          const stopBearing = bearing(latitude, longitude, lat, lon);
-          const direction = compassDirection(stopBearing);
-
-          return {
-            id: f.properties.AtcoCode, // keep full AtcoCode for Worker
-            cleanId: cleanStopCode(f.properties.AtcoCode),
-            name: f.properties.SCN_English || "Unknown",
-            distance: distance(latitude, longitude, lat, lon),
-            direction,
-            lat,
-            lon,
-          };
+        // Distance to each stop
+        stops.forEach(s => {
+            const [lon2, lat2] = s.geometry.coordinates;
+            s.properties.distance = distance(lat, lon, lat2, lon2);
+            s.properties.bearing = bearing(lat, lon, lat2, lon2);
         });
 
-      // Sort by distance and take the nearest 5 stops
-      distances.sort((a, b) => a.distance - b.distance);
-      const nearest = distances.slice(0, 5);
+        // Sort and take nearest 5
+        const nearest = stops
+            .sort((a,b) => a.properties.distance - b.properties.distance)
+            .slice(0, 5);
 
-      // Display nearest stops
-      stopsDiv.innerHTML = nearest
-        .map(
-          (s) => `
-          <div class="stop">
-            <strong>${s.name}</strong><br>
-            Stop No: ${s.cleanId}<br>
-            <a href="https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lon}" target="_blank">
-              ${s.distance.toFixed(0)} m (${s.direction})
-            </a>
-            <div class="arrivals" id="arrivals-${s.cleanId}">Loading arrivals...</div>
-          </div>
-        `
-        )
-        .join("");
+        // Display
+        const results = document.getElementById("results");
+        results.innerHTML = "";
 
-      // Fetch real-time arrivals for each stop
-      nearest.forEach(async (s) => {
-        const arrivalsDiv = document.getElementById(`arrivals-${s.cleanId}`);
-        try {
-          const data = await getArrivals(s.id); // full AtcoCode
-          if (!data || !data.arrivals || data.arrivals.length === 0) {
-            arrivalsDiv.textContent = "No upcoming arrivals";
-            return;
-          }
-          arrivalsDiv.innerHTML = data.arrivals
-            .map(
-              (a) =>
-                `${a.Line} → ${a.DestinationName || a.Destination} (${formatTime(
-                  a.ExpectedArrival
-                )})`
-            )
-            .join("<br>");
-        } catch (err) {
-          arrivalsDiv.textContent = "Error loading arrivals";
+        for (const stop of nearest) {
+            const id = stop.properties.stop_id;
+            const name = stop.properties.stop_name;
+            const dist = Math.round(stop.properties.distance);
+            const dir = stop.properties.bearing;
+
+            const stopCard = document.createElement("div");
+            stopCard.className = "stop-card";
+
+            stopCard.innerHTML = `
+                <div class="stop-title">${name} (${id})</div>
+                <div>${dist}m ${dir}</div>
+                <div class="arrival-list" id="arr-${id}">Loading…</div>
+            `;
+
+            results.appendChild(stopCard);
+
+            // Fetch expected times
+            try {
+                const url = `${R2_BASE}/${id}.json`;
+                const resp = await fetch(url);
+
+                if (!resp.ok) {
+                    document.getElementById(`arr-${id}`).innerText = "No data";
+                    continue;
+                }
+
+                const arrivals = await resp.json();
+
+                const listDiv = document.getElementById(`arr-${id}`);
+                listDiv.innerHTML = arrivals.map(a =>
+                    `<div><b>${a.route_short}</b> → ${a.trip_headsign} @ ${a.arrival_time}</div>`
+                ).join("");
+
+            } catch {
+                document.getElementById(`arr-${id}`).innerText = "Error loading stop";
+            }
         }
-      });
-    },
-    (err) => {
-      coordsDiv.textContent = `Error: ${err.message}`;
-    },
-    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-  );
+
+    }, err => {
+        document.getElementById("status").innerText = "Location error.";
+    });
 }
 
 main();
