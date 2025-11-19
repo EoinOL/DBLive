@@ -13,14 +13,12 @@ function getDistanceAndBearing(lat1, lon1, lat2, lon2) {
   const Δφ = (lat2 - lat1) * Math.PI / 180;
   const Δλ = (lon2 - lon1) * Math.PI / 180;
 
-  const a = Math.sin(Δφ/2) ** 2 +
-            Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) ** 2;
+  const a = Math.sin(Δφ/2)**2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2)**2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   const distance = R * c;
 
   const y = Math.sin(Δλ) * Math.cos(φ2);
-  const x = Math.cos(φ1)*Math.sin(φ2) -
-            Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
+  const x = Math.cos(φ1)*Math.sin(φ2) - Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
   const bearingDeg = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
 
   return {distance: Math.round(distance), bearing: degToCompass(bearingDeg)};
@@ -34,33 +32,38 @@ async function loadStops() {
   return JSON.parse(decompressed);
 }
 
-// Load GTFS-RT from our Cloudflare worker
+// Load GTFS-RT via Cloudflare worker
 async function loadRealtimeTrips() {
-  const url = "https://falling-firefly-fd90.eoinol.workers.dev/";
-  try {
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`GTFS-RT fetch failed: ${resp.status}`);
-    const data = await resp.json();
-    console.log("Raw GTFS-RT feed:", data);
-    return data.arrivals || [];
-  } catch (err) {
-    console.error(err);
-    return [];
-  }
+  const resp = await fetch('https://falling-firefly-fd90.eoinol.workers.dev/');
+  if (!resp.ok) throw new Error(`GTFS-RT fetch failed: ${resp.status}`);
+  const data = await resp.json();
+  console.log("Raw GTFS-RT feed:", data);
+  return data.arrivals;
 }
 
-// Main render
+// Load scheduled trip info (trip_id -> route/headsign/time)
+async function loadScheduledTrips() {
+  const resp = await fetch('trips.json'); // your full scheduled trips JSON
+  const trips = await resp.json();
+  const map = {};
+  trips.forEach(t => {
+    t.stop_time_update?.forEach(stu => {
+      map[stu.trip_id] = {
+        route: t.trip_update.trip.route_id,
+        headsign: t.trip_update.trip.trip_headsign || "Unknown",
+        scheduled_time: stu.arrival?.time || stu.departure?.time
+      };
+    });
+  });
+  return map;
+}
+
+// Main render function
 async function renderStops() {
   const stopsData = await loadStops();
-  let userLoc;
-  try {
-    userLoc = await new Promise((res, rej) =>
-      navigator.geolocation.getCurrentPosition(pos => res(pos.coords), err => rej(err))
-    );
-  } catch {
-    alert("Cannot determine location");
-    return;
-  }
+  const userLoc = await new Promise((res, rej) => {
+    navigator.geolocation.getCurrentPosition(pos => res(pos.coords), err => rej(err));
+  });
 
   const stopsWithDistance = stopsData.features.map(f => {
     const {distance, bearing} = getDistanceAndBearing(
@@ -76,46 +79,44 @@ async function renderStops() {
   const container = document.getElementById('stops');
   container.innerHTML = '';
 
-  const realtimeArrivals = await loadRealtimeTrips();
+  // Load GTFS data
+  const realtimeTrips = await loadRealtimeTrips();
+  const scheduledMap = await loadScheduledTrips();
+
+  console.log("Total GTFS-RT trips:", realtimeTrips.length);
 
   for (const stop of nearestStops) {
-    const stopNumber = parseInt(stop.properties.AtcoCode.slice(-6), 10);
-    const mapsLink = `https://www.google.com/maps/search/?api=1&query=${stop.properties.Latitude},${stop.properties.Longitude}`;
-
     const stopDiv = document.createElement('div');
     stopDiv.className = 'stop';
 
+    const stopNumber = parseInt(stop.properties.AtcoCode.slice(-6), 10);
+    const mapsLink = `https://www.google.com/maps/search/?api=1&query=${stop.properties.Latitude},${stop.properties.Longitude}`;
+
     const stopHeader = document.createElement('h3');
     stopHeader.textContent = `${stop.properties.SCN_English} (#${stopNumber})`;
+    stopDiv.appendChild(stopHeader);
 
     const distanceEl = document.createElement('a');
     distanceEl.href = mapsLink;
     distanceEl.target = '_blank';
     distanceEl.textContent = `${stop.distance} m`;
+    stopDiv.appendChild(distanceEl);
 
     const bearingEl = document.createElement('span');
     bearingEl.textContent = ` • ${stop.bearing}`;
-
-    stopDiv.appendChild(stopHeader);
-    stopDiv.appendChild(distanceEl);
     stopDiv.appendChild(bearingEl);
 
-    // filter only trips for this stop
-    const stopArrivals = realtimeArrivals.filter(a => a.AtcoCode === stop.properties.AtcoCode);
-
     const arrivalsUl = document.createElement('ul');
-    for (const a of stopArrivals) {
+
+    // Filter GTFS-RT trips for this stop
+    const stopTrips = realtimeTrips.filter(t => t.stop_id === stop.properties.AtcoCode);
+    stopTrips.forEach(trip => {
+      const info = scheduledMap[trip.trip_id] || {route: "Unknown", headsign: "Unknown", scheduled_time: null};
       const li = document.createElement('li');
-      let line = a.Line || "Unknown";
-      let dest = a.Destination || "Unknown";
-      let realtime = a.ExpectedArrival ? new Date(a.ExpectedArrival).toLocaleTimeString() : null;
-
-      li.textContent = realtime
-        ? `${line} → ${dest} | Real-time: ${realtime}`
-        : `${line} → ${dest}`;
-
+      let timeStr = info.scheduled_time ? new Date(info.scheduled_time * 1000).toISOString().substr(11,8) : "Unknown";
+      li.textContent = `${info.route} → ${info.headsign} | Scheduled: ${timeStr}`;
       arrivalsUl.appendChild(li);
-    }
+    });
 
     stopDiv.appendChild(arrivalsUl);
     container.appendChild(stopDiv);
