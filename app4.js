@@ -1,5 +1,3 @@
-// app4.js
-
 // Convert degrees to 8-point compass
 function degToCompass(deg) {
   const val = Math.floor((deg / 45) + 0.5);
@@ -15,13 +13,14 @@ function getDistanceAndBearing(lat1, lon1, lat2, lon2) {
   const Δφ = (lat2 - lat1) * Math.PI / 180;
   const Δλ = (lon2 - lon1) * Math.PI / 180;
 
-  const a = Math.sin(Δφ/2)**2 +
-            Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2)**2;
+  const a = Math.sin(Δφ/2) ** 2 +
+            Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) ** 2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   const distance = R * c;
 
   const y = Math.sin(Δλ) * Math.cos(φ2);
-  const x = Math.cos(φ1)*Math.sin(φ2) - Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
+  const x = Math.cos(φ1)*Math.sin(φ2) -
+            Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
   const bearingDeg = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
 
   return {distance: Math.round(distance), bearing: degToCompass(bearingDeg)};
@@ -35,37 +34,34 @@ async function loadStops() {
   return JSON.parse(decompressed);
 }
 
-// Load GTFS-RT via Cloudflare worker
+// Load GTFS-RT from our Cloudflare worker
 async function loadRealtimeTrips() {
+  const url = "https://falling-firefly-fd90.eoinol.workers.dev/";
   try {
-    const resp = await fetch('https://falling-firefly-fd90.eoinol.workers.dev/');
+    const resp = await fetch(url);
     if (!resp.ok) throw new Error(`GTFS-RT fetch failed: ${resp.status}`);
     const data = await resp.json();
-    console.log('Raw GTFS-RT feed:', data);
+    console.log("Raw GTFS-RT feed:", data);
     return data.arrivals || [];
   } catch (err) {
-    console.error('Failed to fetch GTFS-RT:', err);
+    console.error(err);
     return [];
   }
 }
 
-// Main render function
+// Main render
 async function renderStops() {
   const stopsData = await loadStops();
-  const realtimeArrivals = await loadRealtimeTrips();
-
-  // Get user location
   let userLoc;
   try {
-    userLoc = await new Promise((res, rej) => {
-      navigator.geolocation.getCurrentPosition(pos => res(pos.coords), err => rej(err));
-    });
-  } catch (err) {
-    console.warn('Location not available, showing stops at 0m');
-    userLoc = { latitude: 0, longitude: 0 };
+    userLoc = await new Promise((res, rej) =>
+      navigator.geolocation.getCurrentPosition(pos => res(pos.coords), err => rej(err))
+    );
+  } catch {
+    alert("Cannot determine location");
+    return;
   }
 
-  // Compute distance to each stop
   const stopsWithDistance = stopsData.features.map(f => {
     const {distance, bearing} = getDistanceAndBearing(
       userLoc.latitude, userLoc.longitude,
@@ -74,47 +70,56 @@ async function renderStops() {
     return {...f, distance, bearing};
   });
 
-  // Nearest 5 stops
+  // nearest 5 stops
   const nearestStops = stopsWithDistance.sort((a,b) => a.distance - b.distance).slice(0,5);
 
   const container = document.getElementById('stops');
   container.innerHTML = '';
 
+  const realtimeArrivals = await loadRealtimeTrips();
+
   for (const stop of nearestStops) {
-    const stopArrivals = realtimeArrivals.filter(a => a.AtcoCode === stop.properties.AtcoCode || a.atco === stop.properties.AtcoCode);
+    const stopNumber = parseInt(stop.properties.AtcoCode.slice(-6), 10);
+    const mapsLink = `https://www.google.com/maps/search/?api=1&query=${stop.properties.Latitude},${stop.properties.Longitude}`;
 
     const stopDiv = document.createElement('div');
     stopDiv.className = 'stop';
 
     const stopHeader = document.createElement('h3');
-    stopHeader.textContent = `${stop.properties.SCN_English} (#${parseInt(stop.properties.AtcoCode.slice(-6),10)})`;
+    stopHeader.textContent = `${stop.properties.SCN_English} (#${stopNumber})`;
+
+    const distanceEl = document.createElement('a');
+    distanceEl.href = mapsLink;
+    distanceEl.target = '_blank';
+    distanceEl.textContent = `${stop.distance} m`;
+
+    const bearingEl = document.createElement('span');
+    bearingEl.textContent = ` • ${stop.bearing}`;
+
     stopDiv.appendChild(stopHeader);
-
-    const distanceEl = document.createElement('span');
-    distanceEl.textContent = `${stop.distance} m • ${stop.bearing}`;
     stopDiv.appendChild(distanceEl);
+    stopDiv.appendChild(bearingEl);
 
-    const mapsLink = document.createElement('a');
-    mapsLink.href = `https://www.google.com/maps/search/?api=1&query=${stop.properties.Latitude},${stop.properties.Longitude}`;
-    mapsLink.target = '_blank';
-    mapsLink.textContent = ' [Map]';
-    stopDiv.appendChild(mapsLink);
+    // filter only trips for this stop
+    const stopArrivals = realtimeArrivals.filter(a => a.AtcoCode === stop.properties.AtcoCode);
 
     const arrivalsUl = document.createElement('ul');
-
-    stopArrivals.forEach(a => {
-      const line = a.Line || 'Unknown';
-      const headsign = a.Destination || 'Unknown';
-      const expected = a.ExpectedArrival ? new Date(a.ExpectedArrival).toLocaleTimeString() : 'Unknown';
+    for (const a of stopArrivals) {
       const li = document.createElement('li');
-      li.textContent = `${line} → ${headsign} | Real-time: ${expected}`;
+      let line = a.Line || "Unknown";
+      let dest = a.Destination || "Unknown";
+      let realtime = a.ExpectedArrival ? new Date(a.ExpectedArrival).toLocaleTimeString() : null;
+
+      li.textContent = realtime
+        ? `${line} → ${dest} | Real-time: ${realtime}`
+        : `${line} → ${dest}`;
+
       arrivalsUl.appendChild(li);
-    });
+    }
 
     stopDiv.appendChild(arrivalsUl);
     container.appendChild(stopDiv);
   }
 }
 
-// Run on page load
 document.addEventListener('DOMContentLoaded', renderStops);
