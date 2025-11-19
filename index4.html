@@ -2,20 +2,18 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Bus Arrivals - Mode A</title>
+<title>Nearest Stops</title>
+<script src="pako.min.js"></script>
+<script src="app4.js" defer></script>
 <style>
-  body { font-family: Arial, sans-serif; margin: 20px; }
-  .stop { margin-bottom: 20px; padding: 10px; border: 1px solid #ccc; border-radius: 6px; }
-  .stop h3 { margin: 0 0 5px 0; }
-  .stop a { margin-left: 5px; text-decoration: none; color: blue; }
-  ul { padding-left: 20px; margin: 5px 0; }
+  body { font-family: sans-serif; padding: 20px; }
+  .stop { margin-bottom: 20px; }
+  .stop h3 { margin: 0; }
+  ul { margin: 5px 0 0 20px; }
 </style>
 </head>
 <body>
 <h1>Nearest Stops</h1>
-<div id="stops">Loading...</div>
-<script src="pako.min.js"></script>
-<script src="app4.js"></script>
+<div id="stops"></div>
 </body>
 </html>
