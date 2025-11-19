@@ -2,19 +2,48 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Nearby Stops</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nearby Bus Stops</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
 <style>
-  body { font-family: sans-serif; margin: 20px; }
-  .stop { margin-bottom: 1.5em; }
-  .stop h3 { margin: 0; }
-  .stop a { margin-left: 5px; text-decoration: none; color: blue; }
+  body {
+    font-family: Arial, sans-serif;
+    margin: 1rem;
+    background: #f9f9f9;
+  }
+  .stop {
+    background: #fff;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-radius: 8px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+  }
+  h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1.2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  span {
+    font-size: 0.9rem;
+    color: #666;
+  }
+  ul {
+    margin: 0;
+    padding-left: 1rem;
+  }
+  li {
+    margin-bottom: 0.3rem;
+  }
 </style>
 </head>
 <body>
-<h1>Nearby Stops</h1>
-<div id="stops"></div>
 
-<script src="pako.min.js"></script>
+<h1>Nearby Bus Stops</h1>
+<div id="stops">Loading...</div>
+
 <script src="app4.js"></script>
+
 </body>
 </html>
