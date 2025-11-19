@@ -35,31 +35,6 @@ async function loadStops() {
   return JSON.parse(decompressed);
 }
 
-// Load trips.txt.gz and build mapping: trip_id -> {route_short, trip_headsign}
-async function loadTripsMapping() {
-  const resp = await fetch('trips.txt.gz');
-  const compressed = new Uint8Array(await resp.arrayBuffer());
-  const decompressed = pako.ungzip(compressed, { to: 'string' });
-  const lines = decompressed.split('\n');
-  const mapping = {};
-  const headers = lines.shift().split(',');
-
-  lines.forEach(line => {
-    if (!line.trim()) return;
-    const parts = line.split(',');
-    const trip = {};
-    headers.forEach((h, idx) => trip[h] = parts[idx]);
-    if (trip.trip_id) {
-      mapping[trip.trip_id] = {
-        route_short: trip.route_short || 'Unknown',
-        trip_headsign: trip.trip_headsign || 'Unknown'
-      };
-    }
-  });
-  console.log('Trips mapping loaded:', Object.keys(mapping).length);
-  return mapping;
-}
-
 // Load GTFS-RT via Cloudflare worker
 async function loadRealtimeTrips() {
   try {
@@ -77,7 +52,6 @@ async function loadRealtimeTrips() {
 // Main render function
 async function renderStops() {
   const stopsData = await loadStops();
-  const tripsMapping = await loadTripsMapping();
   const realtimeArrivals = await loadRealtimeTrips();
 
   // Get user location
@@ -107,7 +81,7 @@ async function renderStops() {
   container.innerHTML = '';
 
   for (const stop of nearestStops) {
-    const stopArrivals = realtimeArrivals.filter(a => a.atco === stop.properties.AtcoCode);
+    const stopArrivals = realtimeArrivals.filter(a => a.AtcoCode === stop.properties.AtcoCode || a.atco === stop.properties.AtcoCode);
 
     const stopDiv = document.createElement('div');
     stopDiv.className = 'stop';
@@ -129,9 +103,11 @@ async function renderStops() {
     const arrivalsUl = document.createElement('ul');
 
     stopArrivals.forEach(a => {
-      const info = tripsMapping[a.trip_id] || {route_short: 'Unknown', trip_headsign: 'Unknown'};
+      const line = a.Line || 'Unknown';
+      const headsign = a.Destination || 'Unknown';
+      const expected = a.ExpectedArrival ? new Date(a.ExpectedArrival).toLocaleTimeString() : 'Unknown';
       const li = document.createElement('li');
-      li.textContent = `${info.route_short} → ${info.trip_headsign} | Real-time: ${a.ExpectedArrival ? new Date(a.ExpectedArrival).toLocaleTimeString() : 'Unknown'}`;
+      li.textContent = `${line} → ${headsign} | Real-time: ${expected}`;
       arrivalsUl.appendChild(li);
     });
 
