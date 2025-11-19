@@ -5,26 +5,23 @@ function degToCompass(deg) {
   return compassPoints[val % 8];
 }
 
-// Calculate distance and bearing between two lat/lon points
+// Distance and bearing
 function getDistanceAndBearing(lat1, lon1, lat2, lon2) {
-  const R = 6371000; // meters
+  const R = 6371000;
   const φ1 = lat1 * Math.PI / 180;
   const φ2 = lat2 * Math.PI / 180;
   const Δφ = (lat2 - lat1) * Math.PI / 180;
   const Δλ = (lon2 - lon1) * Math.PI / 180;
-
   const a = Math.sin(Δφ/2)**2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2)**2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   const distance = R * c;
-
   const y = Math.sin(Δλ) * Math.cos(φ2);
   const x = Math.cos(φ1)*Math.sin(φ2) - Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
   const bearingDeg = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
-
   return {distance: Math.round(distance), bearing: degToCompass(bearingDeg)};
 }
 
-// Load stops.geojson.gz
+// Load stops
 async function loadStops() {
   const resp = await fetch('stops.geojson.gz');
   const compressed = new Uint8Array(await resp.arrayBuffer());
@@ -32,7 +29,7 @@ async function loadStops() {
   return JSON.parse(decompressed);
 }
 
-// Load GTFS-RT via Cloudflare worker
+// Load GTFS-RT feed
 async function loadRealtimeTrips() {
   const resp = await fetch('https://falling-firefly-fd90.eoinol.workers.dev/');
   if (!resp.ok) throw new Error(`GTFS-RT fetch failed: ${resp.status}`);
@@ -41,24 +38,33 @@ async function loadRealtimeTrips() {
   return data.arrivals;
 }
 
-// Load scheduled trip info (trip_id -> route/headsign/time)
+// Load trips.txt.gz and build trip_id -> {route, headsign} map
 async function loadScheduledTrips() {
-  const resp = await fetch('trips.json'); // your full scheduled trips JSON
-  const trips = await resp.json();
+  const resp = await fetch('trips.txt.gz');
+  const compressed = new Uint8Array(await resp.arrayBuffer());
+  const decompressed = pako.ungzip(compressed, { to: 'string' });
+  
+  const lines = decompressed.split('\n');
+  const headers = lines[0].split(',');
+  const tripIdIdx = headers.indexOf('trip_id');
+  const routeIdIdx = headers.indexOf('route_id');
+  const headsignIdx = headers.indexOf('trip_headsign');
+
   const map = {};
-  trips.forEach(t => {
-    t.stop_time_update?.forEach(stu => {
-      map[stu.trip_id] = {
-        route: t.trip_update.trip.route_id,
-        headsign: t.trip_update.trip.trip_headsign || "Unknown",
-        scheduled_time: stu.arrival?.time || stu.departure?.time
-      };
-    });
+  lines.slice(1).forEach(line => {
+    if (!line.trim()) return;
+    const cols = line.split(',');
+    const trip_id = cols[tripIdIdx];
+    map[trip_id] = {
+      route: cols[routeIdIdx] || 'Unknown',
+      headsign: cols[headsignIdx] || 'Unknown'
+    };
   });
+  console.log("Scheduled trips loaded:", Object.keys(map).length);
   return map;
 }
 
-// Main render function
+// Main
 async function renderStops() {
   const stopsData = await loadStops();
   const userLoc = await new Promise((res, rej) => {
@@ -73,13 +79,10 @@ async function renderStops() {
     return {...f, distance, bearing};
   });
 
-  // nearest 5 stops
   const nearestStops = stopsWithDistance.sort((a,b) => a.distance - b.distance).slice(0,5);
-
   const container = document.getElementById('stops');
   container.innerHTML = '';
 
-  // Load GTFS data
   const realtimeTrips = await loadRealtimeTrips();
   const scheduledMap = await loadScheduledTrips();
 
@@ -108,13 +111,11 @@ async function renderStops() {
 
     const arrivalsUl = document.createElement('ul');
 
-    // Filter GTFS-RT trips for this stop
     const stopTrips = realtimeTrips.filter(t => t.stop_id === stop.properties.AtcoCode);
     stopTrips.forEach(trip => {
-      const info = scheduledMap[trip.trip_id] || {route: "Unknown", headsign: "Unknown", scheduled_time: null};
+      const info = scheduledMap[trip.trip_id] || {route: "Unknown", headsign: "Unknown"};
       const li = document.createElement('li');
-      let timeStr = info.scheduled_time ? new Date(info.scheduled_time * 1000).toISOString().substr(11,8) : "Unknown";
-      li.textContent = `${info.route} → ${info.headsign} | Scheduled: ${timeStr}`;
+      li.textContent = `${info.route} → ${info.headsign}`;
       arrivalsUl.appendChild(li);
     });
 
