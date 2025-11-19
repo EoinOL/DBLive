@@ -1,118 +1,165 @@
-// ----------------------------
-// 1. Load GTFS-RT feed
-// ----------------------------
+// Convert degrees to 8-point compass
+function degToCompass(deg) {
+  const val = Math.floor((deg / 45) + 0.5);
+  const compassPoints = ["N","NE","E","SE","S","SW","W","NW"];
+  return compassPoints[val % 8];
+}
+
+// Haversine distance + bearing
+function getDistanceAndBearing(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const φ1 = lat1 * Math.PI / 180;
+  const φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+  const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  const distance = R * c;
+
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x = Math.cos(φ1)*Math.sin(φ2) - Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
+  const bearingDeg = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+
+  return {distance: Math.round(distance), bearing: degToCompass(bearingDeg)};
+}
+
+// Load stops.geojson.gz
+async function loadStops() {
+  const resp = await fetch('stops.geojson.gz');
+  const compressed = new Uint8Array(await resp.arrayBuffer());
+  const decompressed = pako.ungzip(compressed, { to: 'string' });
+  return JSON.parse(decompressed);
+}
+
+// Load individual stop JSON
+async function loadStopJson(atco) {
+  const url = `https://pub-aad94a89c9ea4f6390466b521c65d978.r2.dev/stops/${atco}.json`;
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch (err) {
+    console.warn(`Stop ${atco} failed`, err);
+    return null;
+  }
+}
+
+// Fetch full GTFS-RT feed from worker
 async function loadRealtimeTrips() {
-    const url = "https://falling-firefly-fd90.eoinol.workers.dev/";
+  const resp = await fetch('https://falling-firefly-fd90.eoinol.workers.dev/');
+  if (!resp.ok) throw new Error(`GTFS-RT fetch failed: ${resp.status}`);
+  const data = await resp.json();
+  return data.entity || [];
+}
 
-    const res = await fetch(url);
-    if (!res.ok) {
-        console.error("GTFS-RT fetch failed:", res.status);
-        return {};
-    }
+// Merge scheduled stop arrivals with GTFS-RT
+function mergeArrivals(stopArrivals, realtimeTrips) {
+  const merged = [];
 
-    const data = await res.json();
-    const tripMap = {};
-
-    for (const ent of data.entity || []) {
-        if (!ent.trip_update) continue;
-
-        const t = ent.trip_update.trip;
-
-        tripMap[t.trip_id] = {
-            start_time: t.start_time || null,
-            start_date: t.start_date || null,
-            route_id: t.route_id || null,
-            direction_id: t.direction_id,
-            relationship: t.schedule_relationship || "SCHEDULED",
-            updates: ent.trip_update.stop_time_update || []
+  stopArrivals.forEach(sa => {
+    const tripRT = realtimeTrips
+      .filter(e => e.trip_update && e.trip_update.stop_time_update)
+      .map(e => {
+        const stu = e.trip_update.stop_time_update.find(u => u.stop_id === sa.trip_id);
+        if (!stu) return null;
+        return {
+          trip_id: e.trip_update.trip.trip_id,
+          line: e.trip_update.trip.route_id,
+          destination: e.trip_update.trip.headsign || sa.trip_headsign,
+          realtime: stu.arrival?.time ? new Date(stu.arrival.time * 1000) : null,
+          scheduled: sa.arrival_time ? new Date(`1970-01-01T${sa.arrival_time}`) : null
         };
-    }
+      })
+      .filter(x => x !== null);
 
-    console.log("Realtime trip map:", tripMap);
-    return tripMap;
+    if (tripRT.length) merged.push(...tripRT);
+    else merged.push({
+      trip_id: sa.trip_id,
+      line: sa.route_short,
+      destination: sa.trip_headsign,
+      realtime: null,
+      scheduled: sa.arrival_time ? new Date(`1970-01-01T${sa.arrival_time}`) : null
+    });
+  });
+
+  // Deduplicate by trip_id
+  const unique = [];
+  const seen = new Set();
+  merged.forEach(a => {
+    if (!seen.has(a.trip_id)) {
+      unique.push(a);
+      seen.add(a.trip_id);
+    }
+  });
+
+  return unique.sort((a,b) => {
+    if (!a.realtime && !b.realtime) return a.scheduled - b.scheduled;
+    if (!a.realtime) return 1;
+    if (!b.realtime) return -1;
+    return a.realtime - b.realtime;
+  });
 }
 
+// Main render
+async function renderStops() {
+  const stopsData = await loadStops();
+  const userLoc = await new Promise((res, rej) => {
+    navigator.geolocation.getCurrentPosition(p => res(p.coords), rej);
+  });
 
+  const stopsWithDistance = stopsData.features.map(f => {
+    const {distance, bearing} = getDistanceAndBearing(
+      userLoc.latitude, userLoc.longitude,
+      parseFloat(f.properties.Latitude), parseFloat(f.properties.Longitude)
+    );
+    return {...f, distance, bearing};
+  });
 
-// ----------------------------
-// 2. Load static stop-time JSON (your local JSON files)
-// ----------------------------
-async function loadStaticStop(stopId) {
-    const url = `./stops/${stopId}.json`;
+  const nearestStops = stopsWithDistance.sort((a,b) => a.distance-b.distance).slice(0,5);
+  const realtimeTrips = await loadRealtimeTrips();
 
-    try {
-        const res = await fetch(url);
-        if (!res.ok) return null;
-        return await res.json();
-    } catch (e) {
-        console.error("Static stop load failed", e);
-        return null;
-    }
+  const container = document.getElementById('stops');
+  container.innerHTML = '';
+
+  for (const stop of nearestStops) {
+    const arrivals = await loadStopJson(stop.properties.AtcoCode);
+    const merged = arrivals ? mergeArrivals(arrivals, realtimeTrips) : [];
+
+    const stopNumber = parseInt(stop.properties.AtcoCode.slice(-6), 10);
+    const mapsLink = `https://www.google.com/maps/search/?api=1&query=${stop.properties.Latitude},${stop.properties.Longitude}`;
+
+    const stopDiv = document.createElement('div');
+    stopDiv.className = 'stop';
+
+    const stopHeader = document.createElement('h3');
+    stopHeader.textContent = `${stop.properties.SCN_English} (#${stopNumber})`;
+
+    const distanceEl = document.createElement('a');
+    distanceEl.href = mapsLink;
+    distanceEl.target = '_blank';
+    distanceEl.textContent = `${stop.distance} m`;
+
+    const bearingEl = document.createElement('span');
+    bearingEl.textContent = ` • ${stop.bearing}`;
+
+    stopDiv.appendChild(stopHeader);
+    stopDiv.appendChild(distanceEl);
+    stopDiv.appendChild(bearingEl);
+
+    const arrivalsUl = document.createElement('ul');
+    merged.forEach(a => {
+      const li = document.createElement('li');
+      li.textContent = `${a.line} → ${a.destination}`;
+      if (a.realtime || a.scheduled) {
+        li.textContent += ` | Real-time: ${a.realtime ? a.realtime.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '--'} | Scheduled: ${a.scheduled ? a.scheduled.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '--'}`;
+      }
+      arrivalsUl.appendChild(li);
+    });
+
+    stopDiv.appendChild(arrivalsUl);
+    container.appendChild(stopDiv);
+  }
 }
 
-
-
-// ----------------------------
-// 3. Lookup function
-// ----------------------------
-async function lookupStop() {
-    const stopId = document.getElementById("stopInput").value.trim();
-    const results = document.getElementById("results");
-
-    if (!stopId) {
-        results.innerHTML = "Enter a stop ID";
-        return;
-    }
-
-    results.innerHTML = "Loading...";
-
-    const rtTrips = await loadRealtimeTrips();
-    const staticStopData = await loadStaticStop(stopId);
-
-    if (!staticStopData) {
-        results.innerHTML = "Stop not found in static data.";
-        return;
-    }
-
-    const staticArrivals = staticStopData.arrivals || [];
-
-    // -------------- Important ----------------
-    // Keep only static entries that match an RT trip
-    // -----------------------------------------
-    const mergedTrips = staticArrivals
-        .filter(a => rtTrips[a.trip_id])  // ONLY real-time confirmed trips
-        .map(a => ({
-            trip_id: a.trip_id,
-            route: a.route,
-            direction: a.direction,
-            static_time: a.time, // scheduled time from static JSON
-            rt: rtTrips[a.trip_id]
-        }));
-
-    // No RT? Then the stop has no service right now.
-    if (mergedTrips.length === 0) {
-        results.innerHTML = "No active real-time trips for this stop.";
-        return;
-    }
-
-    // Render
-    let html = `<div class='header'>Stop ${stopId}</div>`;
-
-    for (const trip of mergedTrips) {
-        html += `
-            <div class="trip">
-                <div><b>${trip.route}</b> → ${trip.direction}</div>
-                <div>Scheduled: ${trip.static_time}</div>
-                <div>Trip ID: ${trip.trip_id}</div>
-                <div>RT start: ${trip.rt.start_time || "?"}</div>
-                <div>Delays: ${
-                    trip.rt.updates.length > 0 ? 
-                        trip.rt.updates[0].arrival?.delay + "s" :
-                        "none"
-                }</div>
-            </div>
-        `;
-    }
-
-    results.innerHTML = html;
-}
+document.addEventListener('DOMContentLoaded', renderStops);
