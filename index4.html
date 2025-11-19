@@ -1,40 +1,21 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Nearby Bus Stops</title>
-  <style>
-    body {
-      font-family: sans-serif;
-      margin: 20px;
-    }
-    .stop {
-      margin-bottom: 20px;
-      padding: 10px;
-      border: 1px solid #ccc;
-      border-radius: 8px;
-    }
-    .stop h3 {
-      margin: 0 0 5px 0;
-    }
-    .stop a {
-      margin-right: 10px;
-      text-decoration: none;
-      color: #0077cc;
-    }
-    .arrivals {
-      margin-top: 5px;
-      padding-left: 15px;
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bus Arrivals - Mode A</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 20px; }
+  .stop { margin-bottom: 20px; padding: 10px; border: 1px solid #ccc; border-radius: 6px; }
+  .stop h3 { margin: 0 0 5px 0; }
+  .stop a { margin-left: 5px; text-decoration: none; color: blue; }
+  ul { padding-left: 20px; margin: 5px 0; }
+</style>
 </head>
 <body>
-  <h1>Nearby Bus Stops</h1>
-  <div id="stops">Loading stops...</div>
-
-  <!-- Local pako.min.js -->
-  <script src="pako.min.js"></script>
-  <!-- Main app script -->
-  <script src="app4.js"></script>
+<h1>Nearest Stops</h1>
+<div id="stops">Loading...</div>
+<script src="pako.min.js"></script>
+<script src="app4.js"></script>
 </body>
 </html>
