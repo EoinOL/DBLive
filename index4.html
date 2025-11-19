@@ -1,31 +1,27 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<title>Nearby Bus Stops — RT+Schedule</title>
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<style>
-  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial; padding: 18px; max-width:900px; margin:auto; }
-  h1 { margin: 0 0 12px 0; }
-  .status { margin-bottom: 12px; color: #333; }
-  .stop { border-bottom: 1px solid #eee; padding: 12px 0; }
-  .stop h3 { margin: 0 0 6px 0; font-size:1.05rem; }
-  .meta { color: #666; font-size:0.95rem; margin-bottom:6px; }
-  ul { margin: 6px 0 0 18px; padding: 0; }
-  li { margin-bottom: 6px; }
-  .scheduled { color: #444; }
-  .realtime { color: #0b6; font-weight:600; margin-left:8px; }
-  .delay { color: #c33; margin-left:8px; }
-  .small { font-size:0.9rem; color:#666; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stop Viewer (GTFS-RT anchored)</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .result { margin-top: 20px; padding: 10px; border: 1px solid #ccc; }
+        .trip { margin-bottom: 12px; padding: 10px; border-left: 4px solid #007bff; }
+        .header { font-size: 1.2em; font-weight: bold; margin-bottom: 8px; }
+    </style>
 </head>
 <body>
-  <h1>Nearby Bus Stops — RT + Schedule Merge</h1>
-  <div id="status" class="status">Starting…</div>
-  <div id="stops">Loading…</div>
 
-  <!-- pako must be local, in same folder -->
-  <script src="pako.min.js"></script>
-  <script src="app4.js" defer></script>
+<h2>Stop Viewer</h2>
+
+<label for="stopInput">Enter stop ID:</label>
+<input type="text" id="stopInput" placeholder="e.g. 2215">
+
+<button onclick="lookupStop()">Lookup</button>
+
+<div id="results" class="result"></div>
+
+<script src="app4.js"></script>
 </body>
 </html>
