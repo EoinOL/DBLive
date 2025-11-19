@@ -2,18 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Nearest Stops</title>
-<script src="pako.min.js"></script>
-<script src="app4.js" defer></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nearby Stops</title>
 <style>
-  body { font-family: sans-serif; padding: 20px; }
-  .stop { margin-bottom: 20px; }
-  .stop h3 { margin: 0; }
-  ul { margin: 5px 0 0 20px; }
+  body { font-family: sans-serif; margin: 1rem; }
+  .stop { margin-bottom: 1rem; }
+  h3 { margin: 0; }
+  a { text-decoration: none; color: blue; }
 </style>
 </head>
 <body>
-<h1>Nearest Stops</h1>
-<div id="stops"></div>
+<h1>Nearby Stops</h1>
+<div id="stops">Loading...</div>
+<script src="pako.min.js"></script>
+<script src="app4.js"></script>
 </body>
 </html>
