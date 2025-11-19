@@ -1,27 +1,30 @@
+// app4.js
+
 // Convert degrees to 8-point compass
 function degToCompass(deg) {
   const val = Math.floor((deg / 45) + 0.5);
-  const compassPoints = ["N","NE","E","SE","S","SW","W","NW"];
+  const compassPoints = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
   return compassPoints[val % 8];
 }
 
 // Calculate distance and bearing between two lat/lon points
 function getDistanceAndBearing(lat1, lon1, lat2, lon2) {
-  const R = 6371000;
-  const φ1 = lat1 * Math.PI/180;
-  const φ2 = lat2 * Math.PI/180;
-  const Δφ = (lat2-lat1)*Math.PI/180;
-  const Δλ = (lon2-lon1)*Math.PI/180;
+  const R = 6371000; // meters
+  const φ1 = lat1 * Math.PI / 180;
+  const φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lon2 - lon1) * Math.PI / 180;
 
-  const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
-  const c = 2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  const a = Math.sin(Δφ/2)**2 +
+            Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2)**2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   const distance = R * c;
 
-  const y = Math.sin(Δλ)*Math.cos(φ2);
-  const x = Math.cos(φ1)*Math.sin(φ2)-Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
-  const bearingDeg = (Math.atan2(y,x)*180/Math.PI + 360) % 360;
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x = Math.cos(φ1)*Math.sin(φ2) - Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
+  const bearingDeg = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
 
-  return { distance: Math.round(distance), bearing: degToCompass(bearingDeg) };
+  return {distance: Math.round(distance), bearing: degToCompass(bearingDeg)};
 }
 
 // Load stops.geojson.gz
@@ -32,44 +35,63 @@ async function loadStops() {
   return JSON.parse(decompressed);
 }
 
-// Load GTFS-RT from Cloudflare worker
-async function loadRealtimeTrips() {
-  const url = 'https://falling-firefly-fd90.eoinol.workers.dev/';
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`GTFS-RT fetch failed: ${resp.status}`);
-  const data = await resp.json();
-  console.log('Raw GTFS-RT feed:', data);
-  return data.arrivals || [];
+// Load trips.txt.gz and build mapping: trip_id -> {route_short, trip_headsign}
+async function loadTripsMapping() {
+  const resp = await fetch('trips.txt.gz');
+  const compressed = new Uint8Array(await resp.arrayBuffer());
+  const decompressed = pako.ungzip(compressed, { to: 'string' });
+  const lines = decompressed.split('\n');
+  const mapping = {};
+  const headers = lines.shift().split(',');
+
+  lines.forEach(line => {
+    if (!line.trim()) return;
+    const parts = line.split(',');
+    const trip = {};
+    headers.forEach((h, idx) => trip[h] = parts[idx]);
+    if (trip.trip_id) {
+      mapping[trip.trip_id] = {
+        route_short: trip.route_short || 'Unknown',
+        trip_headsign: trip.trip_headsign || 'Unknown'
+      };
+    }
+  });
+  console.log('Trips mapping loaded:', Object.keys(mapping).length);
+  return mapping;
 }
 
-// Load stop JSON (for additional info if needed)
-async function loadStopJson(atco) {
+// Load GTFS-RT via Cloudflare worker
+async function loadRealtimeTrips() {
   try {
-    const resp = await fetch(`stops/${atco}.json`);
-    if (!resp.ok) return null;
-    return await resp.json();
+    const resp = await fetch('https://falling-firefly-fd90.eoinol.workers.dev/');
+    if (!resp.ok) throw new Error(`GTFS-RT fetch failed: ${resp.status}`);
+    const data = await resp.json();
+    console.log('Raw GTFS-RT feed:', data);
+    return data.arrivals || [];
   } catch (err) {
-    console.warn(`Error loading stop JSON ${atco}:`, err);
-    return null;
+    console.error('Failed to fetch GTFS-RT:', err);
+    return [];
   }
 }
 
-// Main render
+// Main render function
 async function renderStops() {
   const stopsData = await loadStops();
+  const tripsMapping = await loadTripsMapping();
+  const realtimeArrivals = await loadRealtimeTrips();
 
   // Get user location
   let userLoc;
   try {
-    userLoc = await new Promise((res, rej) =>
-      navigator.geolocation.getCurrentPosition(pos => res(pos.coords), err => rej(err))
-    );
+    userLoc = await new Promise((res, rej) => {
+      navigator.geolocation.getCurrentPosition(pos => res(pos.coords), err => rej(err));
+    });
   } catch (err) {
-    alert('Could not get location: ' + err.message);
-    return;
+    console.warn('Location not available, showing stops at 0m');
+    userLoc = { latitude: 0, longitude: 0 };
   }
 
-  // Compute distances
+  // Compute distance to each stop
   const stopsWithDistance = stopsData.features.map(f => {
     const {distance, bearing} = getDistanceAndBearing(
       userLoc.latitude, userLoc.longitude,
@@ -79,69 +101,44 @@ async function renderStops() {
   });
 
   // Nearest 5 stops
-  const nearestStops = stopsWithDistance.sort((a,b) => a.distance-b.distance).slice(0,5);
-
-  // Load GTFS-RT
-  let gtfsRT = [];
-  try {
-    gtfsRT = await loadRealtimeTrips();
-    console.log('Total GTFS-RT trips:', gtfsRT.length);
-  } catch (err) {
-    console.error(err);
-  }
+  const nearestStops = stopsWithDistance.sort((a,b) => a.distance - b.distance).slice(0,5);
 
   const container = document.getElementById('stops');
   container.innerHTML = '';
 
   for (const stop of nearestStops) {
-    const stopNumber = parseInt(stop.properties.AtcoCode.slice(-6), 10);
-    const mapsLink = `https://www.google.com/maps/search/?api=1&query=${stop.properties.Latitude},${stop.properties.Longitude}`;
+    const stopArrivals = realtimeArrivals.filter(a => a.atco === stop.properties.AtcoCode);
 
     const stopDiv = document.createElement('div');
     stopDiv.className = 'stop';
 
     const stopHeader = document.createElement('h3');
-    stopHeader.textContent = `${stop.properties.SCN_English} (#${stopNumber})`;
-    const distanceEl = document.createElement('span');
-    distanceEl.textContent = `${stop.distance} m • ${stop.bearing}`;
-    stopHeader.appendChild(distanceEl);
-
+    stopHeader.textContent = `${stop.properties.SCN_English} (#${parseInt(stop.properties.AtcoCode.slice(-6),10)})`;
     stopDiv.appendChild(stopHeader);
 
-    // Filter GTFS-RT arrivals for this stop
-    const arrivals = gtfsRT.filter(a => a.stop_id === stop.properties.AtcoCode);
+    const distanceEl = document.createElement('span');
+    distanceEl.textContent = `${stop.distance} m • ${stop.bearing}`;
+    stopDiv.appendChild(distanceEl);
 
-    // Deduplicate by trip_id
-    const seenTrips = new Set();
-    const uniqueArrivals = arrivals.filter(a => {
-      if (!a.trip_id) return false;
-      if (seenTrips.has(a.trip_id)) return false;
-      seenTrips.add(a.trip_id);
-      return true;
-    });
+    const mapsLink = document.createElement('a');
+    mapsLink.href = `https://www.google.com/maps/search/?api=1&query=${stop.properties.Latitude},${stop.properties.Longitude}`;
+    mapsLink.target = '_blank';
+    mapsLink.textContent = ' [Map]';
+    stopDiv.appendChild(mapsLink);
 
     const arrivalsUl = document.createElement('ul');
-    if (uniqueArrivals.length === 0) {
+
+    stopArrivals.forEach(a => {
+      const info = tripsMapping[a.trip_id] || {route_short: 'Unknown', trip_headsign: 'Unknown'};
       const li = document.createElement('li');
-      li.textContent = 'No real-time trips available';
+      li.textContent = `${info.route_short} → ${info.trip_headsign} | Real-time: ${a.ExpectedArrival ? new Date(a.ExpectedArrival).toLocaleTimeString() : 'Unknown'}`;
       arrivalsUl.appendChild(li);
-    } else {
-      for (const a of uniqueArrivals) {
-        const li = document.createElement('li');
-        let text = `${a.route || a.Line || 'Unknown'} → ${a.headsign || a.Destination || 'Unknown'}`;
-        if (a.ExpectedArrival) {
-          const dt = new Date(a.ExpectedArrival);
-          text += ` | Real-time: ${dt.toLocaleTimeString()}`;
-        }
-        li.textContent = text;
-        arrivalsUl.appendChild(li);
-      }
-    }
+    });
 
     stopDiv.appendChild(arrivalsUl);
     container.appendChild(stopDiv);
   }
 }
 
-// Run
+// Run on page load
 document.addEventListener('DOMContentLoaded', renderStops);
