@@ -1,27 +1,21 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stop Viewer (GTFS-RT anchored)</title>
-    <style>
-        body { font-family: Arial, sans-serif; padding: 20px; }
-        .result { margin-top: 20px; padding: 10px; border: 1px solid #ccc; }
-        .trip { margin-bottom: 12px; padding: 10px; border-left: 4px solid #007bff; }
-        .header { font-size: 1.2em; font-weight: bold; margin-bottom: 8px; }
-    </style>
+  <meta charset="UTF-8">
+  <title>Nearby Stops</title>
+  <style>
+    body { font-family: sans-serif; margin: 1rem; }
+    .stop { margin-bottom: 1.5rem; }
+    .stop h3 { margin: 0 0 0.2rem 0; }
+    .stop a { margin-left: 0.5rem; }
+    ul { padding-left: 1.2rem; }
+  </style>
 </head>
 <body>
+  <h1>Nearby Stops</h1>
+  <div id="stops">Loading...</div>
 
-<h2>Stop Viewer</h2>
-
-<label for="stopInput">Enter stop ID:</label>
-<input type="text" id="stopInput" placeholder="e.g. 2215">
-
-<button onclick="lookupStop()">Lookup</button>
-
-<div id="results" class="result"></div>
-
-<script src="app4.js"></script>
+  <script src="pako.min.js"></script>
+  <script src="app4.js"></script>
 </body>
 </html>
